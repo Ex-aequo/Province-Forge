@@ -28,16 +28,16 @@ cd server/python && pip install -e '.[test]' && pytest
 ```
 mapgen create ──► <maps_dir>/<mapId>/ manifest.json          server only
                                       static-map.json        server only — NEVER served
-                                      client-map.<hash>.json public, immutable
-                                      tiles/{z}/{x}/{y}.webp public, immutable
+                                      client-map.<hash>.json server only — players get it filtered
+                                      tiles/{z}/{x}/{y}.webp public, immutable (terrain only)
 ```
 
 1. **Build the CLI once** on the server: `npm ci && npm run build:cli` → `build/cli/mapgen.js` (plain Node 20+, needs `@napi-rs/canvas`). Creating a map takes minutes (level 4: ~6 min on 2 cores, ~2,700 tiles, ~24 MB), so it always runs as a background job; progress comes as JSON lines on stdout.
-2. **Python** (`server/python`): `exaequo_map.filter_for_viewer(static, state, viewer)` for players, `viewer=None, gm=True` only for the game's GM; `can_enter()` refuses lakes/ice and reserved start territories; `assign_reserved_slot()` for late joiners; `load_bundle()` reads a bundle. The Python filter must give byte-identical results to `src/game/state.ts` — `tests/test_vectors.py` checks it in CI.
-3. **FastAPI example** (`exaequo_map.api`): `POST /games/{id}/map` (GM, starts the job), `GET /games/{id}/map/jobs/{job}`, `GET /games/{id}/map` (client map URL + tiles base), `GET /games/{id}/turns/{n}/view` (filtered for the caller; GM view for the GM), `POST …/can-enter`. Bring your own `current_user` dependency — the included `debug_user_header` trusts a header and is for local tests only.
+2. **Python** (`server/python`): `exaequo_map.filter_for_viewer(static, state, viewer)` for players, `viewer=None, gm=True` only for the game's GM; `filter_client_map(client_map, view["visible"])` cuts the geometry to what that player sees (hidden land has no shape, name, terrain or kind in the browser); `can_enter()` refuses lakes/ice and reserved start territories; `can_own()` — only land provinces can belong to a kingdom; `assign_reserved_slot()` for late joiners; `load_bundle()` reads a bundle. Both filters must give identical results to the TypeScript reference (`src/game/state.ts`, `src/map/filterClientMap.ts`) — `tests/test_vectors.py` checks it in CI (`npm run vectors` regenerates the vectors).
+3. **FastAPI example** (`exaequo_map.api`): `POST /games/{id}/map` (GM, starts the job), `GET /games/{id}/map/jobs/{job}`, `GET /games/{id}/map` (tiles base), `GET /games/{id}/turns/{n}/view` (filtered for the caller; GM view for the GM), `GET /games/{id}/turns/{n}/map` (client map cut to the caller's view, ETag on the visible set; full map for the GM), `POST …/can-enter` (`allowed`, `ownable`). Bring your own `current_user` dependency — the included `debug_user_header` trusts a header and is for local tests only.
 4. **PostgreSQL**: `server/sql/schema.sql` — `maps` (metadata + manifest), `games`, `game_players`, `turn_states` (full unfiltered state as JSONB). Map files stay on disk.
-5. **nginx**: `server/nginx/maps.conf` — serves only the client map and tiles with `immutable` caching; everything else under `/maps/` is 404.
-6. **Client** (React + Vite): `<ProvinceMap map={clientMap} tiles={new UrlTileSource(tilesBase, clientMap.tiles)} view={viewerState} lang="pt" />` (`src/view/MapViewReact.tsx`); `src/demo/main.tsx` is a complete example. Framework-free: `new MapView(container, {...})`.
+5. **nginx**: `server/nginx/maps.conf` — serves only the terrain tiles, with `immutable` caching; everything else under `/maps/` (static map, full client map, manifest) is 404.
+6. **Client** (React + Vite): each turn fetch `/turns/{n}/view` and `/turns/{n}/map`, then `<ProvinceMap map={turnMap} tiles={new UrlTileSource(tilesBase, turnMap.tiles)} view={viewerState} lang="pt" />` (keep the same `UrlTileSource` across turns so loaded tiles stay cached) (`src/view/MapViewReact.tsx`); `src/demo/main.tsx` is a complete example. Framework-free: `new MapView(container, {...})`.
 
 `mapId` is a content hash (generator output without timestamps/timings), so the same generator + params gives the same id.
 
@@ -91,7 +91,8 @@ Three phonetic cultures (Iberian, Nordic, desert), one per continent; islands ta
 ## Known limits
 
 - Fairness is measured on land steps only; sea access to rares is not scored.
-- **The fog of war hides state, not geography.** The client map and terrain tiles contain the whole world's shape (coasts, provinces, names); a player who inspects the downloads sees the geography of unexplored land, but never owners, armies, Praga, resources or start positions. Hiding geography too would need per-player tile masking — not done.
+- **Fog of war, option c (decided with Pedro):** a player's browser never gets the provinces, borders, names or terrain types of land they cannot see. The terrain TILES are still public and show the whole world's relief and coasts (no borders, no names) to anyone who inspects the downloads. Option b — tiles masked per player and per turn on the server — is planned for later.
+- The polar ice band is drawn whole once any part of it is visible (it is a single region).
 - iPad was tested in Chromium with iPad Pro 11 emulation (touch pinch/pan/tap). No real Safari/WebKit test yet — please try the demo on a real iPad.
 - The client map is ~1.35 MB (~370 KB gzipped).
 - Generation runs on the main thread in the preview tool (~1.5–3 s).

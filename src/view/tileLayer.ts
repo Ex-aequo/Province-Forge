@@ -24,6 +24,8 @@ export class TileLayer {
   constructor(private baseGroup: SVGGElement, private detailGroup: SVGGElement) {}
 
   setSource(src: TileSource | null, W: number, H: number) {
+    // same tiles (e.g. a new turn's map for the same world): keep everything loaded
+    if (src && src === this.src && W === this.W && H === this.H) return;
     this.gen++;
     for (const url of this.cache.values()) this.src?.release?.(url);
     this.src?.dispose?.();

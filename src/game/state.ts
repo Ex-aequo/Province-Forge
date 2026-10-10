@@ -128,3 +128,9 @@ export function canEnter(map: StateMap, state: TurnState, province: number): boo
   const reserved = new Set(state.reservedSlots ?? []);
   return !(map.starts ?? []).some((st) => reserved.has(st.slot) && st.provinces.includes(province));
 }
+
+/** Server-side rule: may `province` have an owner at all? Only land provinces — sea
+ *  zones, lakes and ice are never part of a kingdom (they can be crossed, not owned). */
+export function canOwn(map: StateMap, province: number): boolean {
+  return map.regions[province]?.kind === 'land';
+}

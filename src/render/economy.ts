@@ -70,13 +70,17 @@ export function renderStarts(map: RenderMap, vs: ViewerState, lang: 'pt' | 'en')
   out.push(`<path fill="none" stroke="rgba(15,10,6,0.9)" stroke-width="1.8" ${nss} d="${chainPath(edges)}"/>`);
   const marks: string[] = [];
   for (const st of starts) {
-    const [x, y] = map.regions[st.capital].label;
+    const cap = map.region(st.capital);
+    if (!cap) continue;
+    const [x, y] = cap.label;
     marks.push(star(x, y, 6.5, st.reserved ? '#a8781e' : '#fff8e6'));
     const label = st.reserved ? (lang === 'pt' ? `Reserva · ${fmt(st.value)}` : `Reserve · ${fmt(st.value)}`) : `${st.slot + 1} · ${fmt(st.value)}`;
     marks.push(`<text class="lbl-start" x="${fmt(x)}" y="${fmt(y + 13)}">${label}</text>`);
   }
   for (const id of vs.gm?.pragaSeeds ?? []) {
-    const [x, y] = map.regions[id].label;
+    const seed = map.region(id);
+    if (!seed) continue;
+    const [x, y] = seed.label;
     marks.push(`<circle cx="${fmt(x)}" cy="${fmt(y)}" r="7" fill="#3f1430" stroke="#f4d6e4" stroke-width="1.2"/><path d="M${fmt(x - 3.5)} ${fmt(y - 3.5)}L${fmt(x + 3.5)} ${fmt(y + 3.5)}M${fmt(x + 3.5)} ${fmt(y - 3.5)}L${fmt(x - 3.5)} ${fmt(y + 3.5)}" stroke="#f4d6e4" stroke-width="1.6"/>`);
   }
   out.push(`<g>${marks.join('')}</g>`);

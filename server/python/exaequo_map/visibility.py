@@ -110,6 +110,13 @@ def can_enter(static_map: StaticMap, state: TurnState, province: int) -> bool:
     return not any(st["slot"] in reserved and province in st["provinces"] for st in static_map.get("starts") or [])
 
 
+def can_own(static_map: StaticMap, province: int) -> bool:
+    """Server rule: may ``province`` have an owner at all? Only land provinces — sea
+    zones, lakes and ice are never part of a kingdom (they can be crossed, not owned)."""
+    regions = static_map["regions"]
+    return 0 <= province < len(regions) and regions[province]["kind"] == "land"
+
+
 def reserved_provinces(static_map: StaticMap, state: TurnState) -> set[int]:
     """All provinces currently protected for late joiners."""
     reserved = set(state.get("reservedSlots") or [])

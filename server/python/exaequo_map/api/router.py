@@ -3,7 +3,8 @@
 Rules enforced here (the security of the fog of war depends on them):
   * players only ever receive ``filter_for_viewer(..., viewer=<their country>)``;
   * the GM view (``viewer=None, gm=True``) is built only for the game's GM user;
-  * ``static-map.json`` is never served — only the client map and tiles, via nginx;
+  * ``static-map.json`` and the full client map are never served — nginx serves only
+    the terrain tiles; each player gets a client map cut to what they can see;
   * moves into reserved start territories are refused (``can_enter``).
 """
 from __future__ import annotations
@@ -13,11 +14,15 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+import hashlib
+import json
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from ..bundle import load_bundle
-from ..visibility import can_enter, filter_for_viewer
+from ..clientmap import filter_client_map
+from ..visibility import can_enter, can_own, filter_for_viewer
 from .jobs import Job, MapJobRunner
 from .store import MapRow, Store
 
@@ -66,6 +71,20 @@ def make_router(settings: Settings, store: Store, current_user: Callable[..., Us
     def static_map(map_id: str) -> dict[str, Any]:
         return load_bundle(settings.maps_dir / map_id).static
 
+    @lru_cache(maxsize=8)
+    def full_client_map(map_id: str) -> dict[str, Any]:
+        b = load_bundle(settings.maps_dir / map_id)
+        return json.loads((b.root / b.client_file).read_text("utf-8"))
+
+    def viewer_of(g, user: User) -> Optional[str]:
+        """None = game master view; else the user's country (403 if not in the game)."""
+        if user.id == g.gm_user:
+            return None
+        country = g.players.get(user.id)
+        if not country:
+            raise HTTPException(403, "not in this game")
+        return country
+
     def game_or_404(game_id: str):
         g = store.get_game(game_id)
         if not g:
@@ -92,31 +111,55 @@ def make_router(settings: Settings, store: Store, current_user: Callable[..., Us
             raise HTTPException(404, "job not found")
         return job.public()
 
-    # ---- map info (any player of the game) ----------------------------------------
+    # ---- map info (any player of the game)
     @r.get("/games/{game_id}/map")
     def map_info(game_id: str, user: User = Depends(current_user)):
         g = game_or_404(game_id)
-        if user.id not in g.players and user.id != g.gm_user:
-            raise HTTPException(403, "not in this game")
+        viewer_of(g, user)
         if not g.map_id:
             raise HTTPException(409, "map not created yet")
-        m = store.get_map(g.map_id)
-        base = f"{settings.maps_url}/{g.map_id}"
-        return {"mapId": g.map_id, "clientMap": f"{base}/{m.client_file}", "tilesBase": f"{base}/"}
+        return {
+            "mapId": g.map_id,
+            # terrain tiles: public, immutable, served by nginx (no borders, no names)
+            "tilesBase": f"{settings.maps_url}/{g.map_id}/",
+            # geometry: per player and per turn, from the API (see turn_map)
+            "turnMap": f"/games/{game_id}/turns/{{turn}}/map",
+        }
 
     # ---- the turn, as this user may see it ----------------------------------------
+    def turn_or_404(g, turn: int):
+        state = store.get_turn(g.game_id, turn)
+        if state is None or not g.map_id:
+            raise HTTPException(404, "turn not found")
+        return state
+
     @r.get("/games/{game_id}/turns/{turn}/view")
     def turn_view(game_id: str, turn: int, user: User = Depends(current_user)):
         g = game_or_404(game_id)
-        state = store.get_turn(game_id, turn)
-        if state is None or not g.map_id:
-            raise HTTPException(404, "turn not found")
-        if user.id == g.gm_user:
-            return filter_for_viewer(static_map(g.map_id), state, None, gm=True)
-        country = g.players.get(user.id)
-        if not country:
-            raise HTTPException(403, "not in this game")
-        return filter_for_viewer(static_map(g.map_id), state, country)
+        viewer = viewer_of(g, user)
+        state = turn_or_404(g, turn)
+        return filter_for_viewer(static_map(g.map_id), state, viewer, gm=viewer is None)
+
+    @r.get("/games/{game_id}/turns/{turn}/map")
+    def turn_map(game_id: str, turn: int, request: Request, user: User = Depends(current_user)):
+        """Client map cut to what this user sees this turn (the GM gets the full map).
+        ETag = map + visible set, so an unchanged view is not downloaded again."""
+        g = game_or_404(game_id)
+        viewer = viewer_of(g, user)
+        state = turn_or_404(g, turn)
+        if viewer is None:
+            visible = None
+            tag = f'"{g.map_id}-full"'
+        else:
+            visible = filter_for_viewer(static_map(g.map_id), state, viewer)["visible"]
+            digest = hashlib.sha256(",".join(map(str, visible)).encode()).hexdigest()[:16]
+            tag = f'"{g.map_id}-{digest}"'
+        headers = {"ETag": tag, "Cache-Control": "private, no-cache"}
+        if request.headers.get("if-none-match") == tag:
+            return Response(status_code=304, headers=headers)
+        cm = full_client_map(g.map_id)
+        body = cm if visible is None else filter_client_map(cm, visible)
+        return Response(json.dumps(body, separators=(",", ":")), media_type="application/json", headers=headers)
 
     @r.post("/games/{game_id}/turns/{turn}/can-enter")
     def check_move(game_id: str, turn: int, body: MoveCheck, user: User = Depends(current_user)):
@@ -126,7 +169,8 @@ def make_router(settings: Settings, store: Store, current_user: Callable[..., Us
         state = store.get_turn(game_id, turn)
         if state is None or not g.map_id:
             raise HTTPException(404, "turn not found")
-        return {"province": body.province, "allowed": can_enter(static_map(g.map_id), state, body.province)}
+        sm = static_map(g.map_id)
+        return {"province": body.province, "allowed": can_enter(sm, state, body.province), "ownable": can_own(sm, body.province)}
 
     return r
 

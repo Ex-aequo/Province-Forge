@@ -44,3 +44,38 @@ def test_player_view_has_no_secrets():
         assert set(v["known"]) <= {c["viewer"]}
         vis = set(v["visible"])
         assert all(int(pid) in vis for pid in v["provinces"])
+
+
+@pytest.mark.parametrize("case", ENTER_CASES, ids=lambda c: f"own-p{c['progress']}")
+def test_can_own_matches_typescript(case):
+    from exaequo_map import can_own
+    for rid, expected in case["canOwn"]:
+        assert can_own(STATIC, rid) is expected, rid
+
+
+CLIENT = json.loads((Path(__file__).parent / "client_vectors.json").read_text("utf-8"))
+
+
+@pytest.mark.parametrize("case", CLIENT["cases"], ids=lambda c: f"client-{c['viewer']}")
+def test_filter_client_map_matches_typescript(case):
+    from exaequo_map import filter_client_map
+    got = roundtrip(filter_client_map(CLIENT["clientMap"], case["visible"]))
+    assert got == case["expected"]
+
+
+def test_filtered_client_map_hides_everything_else():
+    from exaequo_map import filter_client_map
+    case = CLIENT["cases"][0]
+    full = CLIENT["clientMap"]
+    got = filter_client_map(full, case["visible"])
+    shown = {r["id"] for r in got["regions"] if r}
+    assert shown and len(shown) < sum(1 for r in full["regions"] if r)
+    assert len(got["regions"]) == len(full["regions"])  # ids stay indices
+    for c in got["chains"]:
+        if c:
+            assert c["a"] in shown or c["b"] in shown
+    for r in got["regions"]:
+        if r:
+            assert set(r["neighbors"]) <= shown
+    assert all("regs" not in rv for rv in got["rivers"])
+    assert got["partial"] is True

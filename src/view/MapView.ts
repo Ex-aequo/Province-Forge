@@ -11,7 +11,7 @@ import type { ClientMap } from '../map/clientMap';
 import { RenderMap, type Lod } from '../map/renderMap';
 import { renderBase } from '../render/base';
 import { ECONOMY_CSS, renderResources, renderStarts } from '../render/economy';
-import { LABEL_CSS, renderPolitical, type Lang } from '../render/political';
+import { LABEL_CSS, renderFog, renderPolitical, type Lang } from '../render/political';
 import { PALETTE, fmt } from '../render/svg';
 import { TileLayer } from './tileLayer';
 import type { TileSource } from './tileSources';
@@ -146,7 +146,9 @@ export class MapView {
     this.selected = id ?? -1;
     this.renderSelection();
     if (center && id !== null && id >= 0) {
-      const [x, y] = this.rm.regions[id].label;
+      const rg = this.rm.region(id);
+      if (!rg) return;
+      const [x, y] = rg.label;
       const W = this.rm.width, cx = this.viewport.state.cx;
       this.viewport.centerOn(x + Math.round((cx - x) / W) * W, y);
     }
@@ -179,6 +181,11 @@ export class MapView {
         case 'starts': this.gWorld.innerHTML = renderStarts(rm, vs, this.lang); break;
         default: this.gWorld.innerHTML = renderBase(rm, this.mode);
       }
+      // a player's (filtered) map: everything it does not contain is terra incognita,
+      // in every map mode — the terrain tiles underneath must not show through
+      if (rm.partial && this.mode !== 'political' && this.mode !== 'praga') {
+        this.gWorld.insertAdjacentHTML('beforeend', renderFog(rm, new Set(rm.regions.map((r) => r.id))));
+      }
     }
     this.gOverlay.innerHTML = this.overlay;
     this.renderSelection();
@@ -186,8 +193,8 @@ export class MapView {
 
   private renderSelection() {
     const id = this.selected;
-    if (id < 0 || !this.rm.regions[id]) { this.gSel.innerHTML = ''; return; }
-    const r = this.rm.regions[id];
+    const r = this.rm.region(id);
+    if (!r) { this.gSel.innerHTML = ''; return; }
     const path = (ids: number[]) => ids.map((i) => this.rm.rings(i).map((ring) => 'M' + ring.map((v, k) => fmt(v) + (k % 2 ? ' ' : ',')).join('').trim() + 'Z').join('')).join('');
     const nss = 'vector-effect="non-scaling-stroke"';
     this.gSel.innerHTML =

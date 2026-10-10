@@ -1,18 +1,19 @@
 // Demo game client: what a player's browser does in production.
-//   1. GET the client map + tiles (static, cacheable) — here from ./demo-map/
-//   2. GET the turn view already filtered by the server — here pre-baked JSON files
-//   3. <ProvinceMap> draws it
+//   1. terrain tiles: static, public, cacheable — here from ./demo-map/tiles
+//   2. per turn, from the server: the view (filter_for_viewer) and the client map cut
+//      to that view (filter_client_map) — here pre-baked JSON files
+//   3. <ProvinceMap> draws it; hidden land has no geometry in the browser at all
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { ViewerState } from '../game/state';
-import type { ClientMap } from '../map/clientMap';
+import type { ClientMap, TileSpec } from '../map/clientMap';
 import type { Lang } from '../render/political';
 import { RESOURCE_EN, RESOURCE_PT } from '../render/economy';
 import type { MapMode, MapView } from '../view/MapView';
 import { ProvinceMap } from '../view/MapViewReact';
 import { UrlTileSource } from '../view/tileSources';
 
-interface DemoIndex { mapId: string; seed: string; clientMap: string; turns: { turn: number; views: { id: string; label: string; file: string }[] }[] }
+interface DemoIndex { mapId: string; seed: string; tiles: TileSpec; turns: { turn: number; views: { id: string; label: string; file: string; map: string }[] }[] }
 
 const BASE = `${import.meta.env.BASE_URL}demo-map/`;
 const getJson = async <T,>(f: string): Promise<T> => {
@@ -33,6 +34,7 @@ const MODES: { id: MapMode; pt: string; en: string; gmOnly?: boolean }[] = [
 function App() {
   const [index, setIndex] = useState<DemoIndex | null>(null);
   const [map, setMap] = useState<ClientMap | null>(null);
+  const [bytes, setBytes] = useState(0);
   const [err, setErr] = useState<string | null>(null);
   const [turnIdx, setTurnIdx] = useState(1);
   const [viewer, setViewer] = useState(0);
@@ -45,18 +47,21 @@ function App() {
 
   useEffect(() => {
     getJson<DemoIndex>('demo.json')
-      .then(async (ix) => { setIndex(ix); setMap(await getJson<ClientMap>(ix.clientMap)); })
+      .then((ix) => setIndex(ix))
       .catch((e) => setErr(String(e)));
   }, []);
 
-  const tiles = useMemo(() => (map?.tiles ? new UrlTileSource(BASE, map.tiles) : null), [map]);
+  const tiles = useMemo(() => (index ? new UrlTileSource(BASE, index.tiles) : null), [index]);
   const turn = index?.turns[turnIdx];
   const entry = turn?.views[Math.min(viewer, turn.views.length - 1)];
 
   useEffect(() => {
     if (!entry) return;
-    getJson<ViewerState>(entry.file).then(setView).catch((e) => setErr(String(e)));
-  }, [entry?.file]);
+    // view and map change together, so the map never shows a mismatched turn
+    Promise.all([getJson<ViewerState>(entry.file), fetch(BASE + entry.map).then((r) => r.text())])
+      .then(([v, txt]) => { setBytes(txt.length); setMap(JSON.parse(txt)); setView(v); })
+      .catch((e) => setErr(String(e)));
+  }, [entry?.file, entry?.map]);
 
   const isGm = !!view?.gm;
   useEffect(() => { if (!isGm && mode === 'starts') setMode('political'); }, [isGm, mode]);
@@ -101,7 +106,7 @@ function App() {
           <button onClick={() => api.current?.zoomBy(1 / 1.5)} aria-label="zoom −">−</button>
           <button onClick={() => api.current?.fit()} aria-label="fit">⤢</button>
         </div>
-        <div className="note">{t('Dados de teste', 'Test data')} · {index.mapId}</div>
+        <div className="note">{t('Dados de teste', 'Test data')} · {index.mapId} · {t('mapa recebido', 'map received')}: {Math.round(bytes / 1024)} KB · {map.regions.filter(Boolean).length}/{map.regions.length} {t('regiões', 'regions')}</div>
       </div>
     </div>
   );
@@ -109,7 +114,7 @@ function App() {
 
 function Info({ id, map, view, lang }: { id: number; map: ClientMap; view: ViewerState | null; lang: Lang }) {
   const r = map.regions[id];
-  if (!r) return null;
+  if (!r) return <div className="info"><b>{lang === 'pt' ? 'Terra incógnita' : 'Terra incognita'}</b></div>;
   const visible = !view || view.visible.includes(id);
   const p = view?.provinces[id];
   const owner = p?.owner ? view?.countries.find((c) => c.id === p.owner) : null;

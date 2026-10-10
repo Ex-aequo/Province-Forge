@@ -10,7 +10,7 @@ if seed == "fail":
 static = json.loads((Path(__file__).parent / "vectors.json").read_text())["staticMap"]
 out.mkdir(parents=True)
 (out / "static-map.json").write_text(json.dumps(static))
-(out / "client-map.abc.json").write_text("{}")
+(out / "client-map.abc.json").write_text(json.dumps(json.loads((Path(__file__).parent / "client_vectors.json").read_text())["clientMap"]))
 map_id = "f" * 16
 print(json.dumps({"stage": "generate", "seed": seed}))
 print(json.dumps({"stage": "maps", "mapId": map_id}))

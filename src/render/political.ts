@@ -47,7 +47,7 @@ export function renderPolitical(map: RenderMap, vs: ViewerState, opt: PoliticalO
   const visible = new Set(vs.visible);
   for (const b of map.borders) {
     if (b.b < 0) continue;
-    const ka = regions[b.a].kind, kb = regions[b.b].kind;
+    const ka = map.region(b.a)?.kind, kb = map.region(b.b)?.kind;
     if ((ka === 'lake' || ka === 'ice') && visible.has(b.b)) visible.add(b.a);
     if ((kb === 'lake' || kb === 'ice') && visible.has(b.a)) visible.add(b.b);
   }
@@ -114,7 +114,7 @@ export function renderPolitical(map: RenderMap, vs: ViewerState, opt: PoliticalO
 
   // ---- rivers, then borders by hierarchy
   out.push(renderRivers(map.rivers, 0.9));
-  const ownerOf = (id: number) => (regions[id].kind === 'land' ? prov(id)?.owner ?? null : null);
+  const ownerOf = (id: number) => (map.region(id)?.kind === 'land' ? prov(id)?.owner ?? null : null);
   const countryB: RenderBorder[] = [], provB: RenderBorder[] = [];
   for (const b of map.borders) {
     if (b.kind !== 'land') continue;
@@ -138,15 +138,44 @@ export function renderPolitical(map: RenderMap, vs: ViewerState, opt: PoliticalO
   }
 
   // ---- terra incognita on top of everything it hides
-  const hidden = regions.filter((r) => !visible.has(r.id)).map((r) => r.id);
-  if (hidden.length) {
-    out.push(`<path class="fog" fill="${GREY}" stroke="${GREY}" stroke-width="0.8" d="${hidden.map((i) => ringPath(map.rings(i))).join('')}"/>`);
-    const edge = map.borders.filter((b) => b.b >= 0 && visible.has(b.a) !== visible.has(b.b));
-    out.push(`<path fill="none" stroke="rgba(70, 72, 68, 0.7)" stroke-width="1.2" ${nss} d="${chainPath(edge)}"/>`);
-  }
+  out.push(renderFog(map, visible));
 
   if (opt.labels !== false) out.push(renderLabels(map, vs, visible, opt.lang));
   return out.join('');
+}
+
+/**
+ * Terra incognita. On a filtered (player) map the hidden regions have no shape, so the
+ * fog is the whole world minus the visible regions; on a full map (preview tool) it is
+ * simply the hidden regions. Either way it is opaque: no terrain shows through.
+ */
+export function renderFog(map: RenderMap, visible: Set<number>): string {
+  const nss = 'vector-effect="non-scaling-stroke"';
+  const W = map.width, H = map.height;
+  const edge = map.borders.filter((b) => b.b >= 0 && visible.has(b.a) !== visible.has(b.b));
+  const edgePath = edge.length ? `<path fill="none" stroke="rgba(70, 72, 68, 0.7)" stroke-width="1.2" ${nss} d="${chainPath(edge)}"/>` : '';
+  if (!map.partial) {
+    const hidden = map.regions.filter((r) => !visible.has(r.id)).map((r) => r.id);
+    if (!hidden.length) return '';
+    return `<path class="fog" fill="${GREY}" stroke="${GREY}" stroke-width="0.8" d="${hidden.map((i) => ringPath(map.rings(i))).join('')}"/>` + edgePath;
+  }
+  // world rectangle with a hole per visible region; rings that cross the seam also get
+  // a copy shifted by ±W so the hole shows on both sides, and the fog is clipped to the
+  // world so it never spills over the neighbouring wrap copy
+  const holes: string[] = [];
+  for (const r of map.regions) {
+    if (!visible.has(r.id)) continue;
+    for (const ring of map.rings(r.id)) {
+      let x0 = Infinity, x1 = -Infinity;
+      for (let i = 0; i < ring.length; i += 2) { if (ring[i] < x0) x0 = ring[i]; if (ring[i] > x1) x1 = ring[i]; }
+      holes.push(ringPath([ring]));
+      if (x0 < 0) holes.push(ringPath([ring.map((v, i) => (i % 2 ? v : v + W))]));
+      if (x1 > W) holes.push(ringPath([ring.map((v, i) => (i % 2 ? v : v - W))]));
+    }
+  }
+  const cid = `fog-clip-${W}`;
+  return `<clipPath id="${cid}"><rect x="0" y="0" width="${W}" height="${H}"/></clipPath>` +
+    `<path class="fog" clip-path="url(#${cid})" fill="${GREY}" fill-rule="evenodd" d="M0,0H${W}V${H}H0Z${holes.join('')}"/>` + edgePath;
 }
 
 // ------------------------------------------------------------------------------ labels
@@ -241,7 +270,9 @@ function renderLabels(map: RenderMap, vs: ViewerState, visible: Set<number>, lan
   const res: string[] = [];
   for (const st of vs.reserved ?? []) {
     if (!st.provinces.length || st.provinces.some((id) => vs.provinces[id]?.owner)) continue;
-    const [x, y] = regions[st.provinces[0]].label;
+    const r0 = map.region(st.provinces[0]);
+    if (!r0) continue;
+    const [x, y] = r0.label;
     res.push(`<text class="lbl-reserved" x="${fmt(x)}" y="${fmt(y)}">${lang === 'pt' ? 'RESERVADO' : 'RESERVED'}</text>`);
   }
   out.push(`<g class="lbl-countries">${res.join('')}</g>`);
@@ -260,9 +291,8 @@ function reverse(p: number[]) {
  */
 export function countryLabel(map: RenderMap, vs: ViewerState, cid: string, visible: Set<number>, W: number):
   { d: string; pts: number[]; length: number; thickness: number; area: number } | null {
-  const regions = map.regions;
   const owned = new Set<number>();
-  for (const [id, p] of Object.entries(vs.provinces)) if (p.owner === cid && visible.has(Number(id))) owned.add(Number(id));
+  for (const [id, p] of Object.entries(vs.provinces)) if (p.owner === cid && visible.has(Number(id)) && map.region(Number(id))) owned.add(Number(id));
   if (!owned.size) return null;
   // largest contiguous part (land adjacency)
   let bestPart: number[] = [], bestArea = 0;
@@ -270,19 +300,20 @@ export function countryLabel(map: RenderMap, vs: ViewerState, cid: string, visib
   for (const s of owned) {
     if (seen.has(s)) continue;
     const part = [s]; seen.add(s);
-    for (let h = 0; h < part.length; h++) for (const o of regions[part[h]].neighbors) if (owned.has(o) && !seen.has(o)) { seen.add(o); part.push(o); }
-    const area = part.reduce((a, id) => a + regions[id].area, 0);
+    for (let h = 0; h < part.length; h++) for (const o of map.region(part[h])!.neighbors) if (owned.has(o) && !seen.has(o)) { seen.add(o); part.push(o); }
+    const area = part.reduce((a, id) => a + map.region(id)!.area, 0);
     if (area > bestArea) { bestArea = area; bestPart = part; }
   }
   // sample points: each province's outline (LOD 0) plus its label point weighted by
   // area, unwrapped around the first province
   const xs: number[] = [], ys: number[] = [];
-  const x0 = regions[bestPart[0]].label[0];
+  const x0 = map.region(bestPart[0])!.label[0];
   const add = (x: number, y: number) => { xs.push(x + Math.round((x0 - x) / W) * W); ys.push(y); };
   for (const id of bestPart) {
     for (const ring of map.rings(id, 0)) for (let i = 0; i < ring.length; i += 2) add(ring[i], ring[i + 1]);
-    const w = Math.max(1, Math.round(regions[id].area / (map.spacing * map.spacing * 4)));
-    for (let k = 0; k < w; k++) add(regions[id].label[0], regions[id].label[1]);
+    const rg = map.region(id)!;
+    const w = Math.max(1, Math.round(rg.area / (map.spacing * map.spacing * 4)));
+    for (let k = 0; k < w; k++) add(rg.label[0], rg.label[1]);
   }
   const n = xs.length;
   if (n < 3) return null;

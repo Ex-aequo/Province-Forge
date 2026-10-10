@@ -10,7 +10,8 @@ import { makeTestState } from './game/testState';
 import { LABEL_CSS, type Lang } from './render/political';
 import { ECONOMY_CSS, RESOURCE_COLORS, RESOURCE_PT } from './render/economy';
 import { RESOURCES } from './gen/types';
-import { toClientMap } from './map/clientMap';
+import { toClientMap, type ClientMap } from './map/clientMap';
+import { filterClientMap } from './map/filterClientMap';
 import { RenderMap } from './map/renderMap';
 import { MapView, type MapMode } from './view/MapView';
 import { WorkerTileSource } from './view/tileSources';
@@ -160,8 +161,21 @@ function rebuildState(newState = true) {
   $('state-meta').textContent = `Turno ${turnState.turn} · ${turnState.countries.length} países · dados de teste, não são do jogo`;
 }
 
+// What the map view draws: the full client map for the GM, or — exactly like the game
+// server does — the client map cut to the chosen player's view (no hidden geometry).
+let fullClient: ClientMap | null = null, fullRender: RenderMap | null = null, tileSrc: WorkerTileSource | null = null;
+let shownFor = '';
+function syncViewerMap() {
+  if (!mv || !fullClient || !fullRender || !vstate) return;
+  const key = viewer === null ? 'gm' : `${viewer}|${vstate.visible.join(",")}`;
+  if (key === shownFor) return;
+  shownFor = key;
+  mv.setMap(viewer === null ? fullRender : new RenderMap(filterClientMap(fullClient, vstate.visible)), tileSrc, true);
+}
+
 function renderAll() {
   if (!map || !mv) return;
+  syncViewerMap();
   mv.setLang(lang);
   mv.setView(vstate);
   if (VIEW_MODES.includes(mode as MapMode)) { mv.setCustomWorld(null); mv.setMode(mode as MapMode); }
@@ -240,10 +254,13 @@ async function regenerate(keepView = true) {
     params.seed = ($('seed') as HTMLInputElement).value.trim() || DEFAULT_PARAMS.seed;
     map = generateMap(params);
     // exactly what the game client receives: the slim client map + tiles
-    const rm = new RenderMap(toClientMap(map));
+    fullClient = toClientMap(map);
+    fullRender = new RenderMap(fullClient);
+    tileSrc = new WorkerTileSource(map);
+    shownFor = 'gm';
     selected = -1;
     rebuildState(true);
-    ensureView(rm, new WorkerTileSource(map));
+    ensureView(fullRender, tileSrc);
     if (!keepView) mv!.fit();
     renderAll();
     renderStats();

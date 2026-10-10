@@ -26,7 +26,11 @@ export interface RenderRiver { id: number; name?: LocalName; pts: number[]; widt
 export class RenderMap {
   readonly width: number;
   readonly height: number;
+  /** Regions this map knows (all of them, or only the visible ones on a filtered map). */
   readonly regions: RenderRegion[];
+  /** True when the map was cut down to one player's view (hidden regions have no shape). */
+  readonly partial: boolean;
+  private byId: (RenderRegion | undefined)[] = [];
   readonly landmasses: ClientMap['landmasses'];
   /** Typical province size in map units (used to size labels). */
   readonly spacing: number;
@@ -43,17 +47,19 @@ export class RenderMap {
     this.width = cm.world.width;
     this.height = cm.world.height;
     this.landmasses = cm.landmasses;
-    this.regions = cm.regions.map((r: ClientRegion) => ({
+    this.partial = !!cm.partial;
+    this.regions = cm.regions.filter((r): r is ClientRegion => !!r).map((r) => ({
       id: r.id, kind: r.kind, seaKind: r.seaKind, landmass: r.landmass, coastal: r.coastal,
       terrain: r.terrain, hasRiver: r.hasRiver, name: r.name, label: r.label, area: r.area,
       neighbors: r.neighbors, riverNeighbors: r.riverNeighbors,
     }));
+    for (const r of this.regions) this.byId[r.id] = r;
     const land = this.regions.filter((r) => r.kind === 'land');
-    this.spacing = Math.sqrt(land.reduce((s, r) => s + r.area, 0) / Math.max(1, land.length)) / 5;
+    this.spacing = cm.spacing ?? Math.sqrt(land.reduce((s, r) => s + r.area, 0) / Math.max(1, land.length)) / 5;
 
     // spatial index for picking (bounding boxes of LOD-1 rings, x in [0, W))
     this.cell = this.width / 64;
-    this.bbox = new Float64Array(this.regions.length * 4);
+    this.bbox = new Float64Array(cm.regions.length * 4);
     for (const r of this.regions) {
       let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
       for (const ring of this.rings(r.id, 1)) for (let i = 0; i < ring.length; i += 2) {
@@ -70,6 +76,9 @@ export class RenderMap {
     }
   }
 
+  /** Region by id, or undefined when this (filtered) map does not know it. */
+  region(id: number): RenderRegion | undefined { return id >= 0 ? this.byId[id] : undefined; }
+
   private key(gx: number, gy: number) {
     const n = Math.round(this.width / this.cell);
     return (((gx % n) + n) % n) * 4096 + gy;
@@ -82,10 +91,10 @@ export class RenderMap {
     if (out) return out;
     out = [];
     const W = this.width;
-    for (const arcs of this.cm.regions[id].arcs) {
+    for (const arcs of this.cm.regions[id]?.arcs ?? []) {
       const ring: number[] = [];
       arcs.forEach(([ci, rev, k], i) => {
-        const src = this.cm.chains[ci].lod[lod];
+        const src = this.cm.chains[ci]!.lod[lod];
         const m = src.length / 2;
         for (let j = i === 0 ? 0 : 1; j < m; j++) {
           const t = rev ? m - 1 - j : j;
@@ -100,12 +109,12 @@ export class RenderMap {
 
   get borders(): RenderBorder[] {
     const l = this.lod;
-    return (this.borderCache[l] ??= this.cm.chains.map((c) => ({ a: c.a, b: c.b, kind: c.kind, closed: c.closed, pts: c.lod[l] })));
+    return (this.borderCache[l] ??= this.cm.chains.filter((c) => !!c).map((c) => ({ a: c!.a, b: c!.b, kind: c!.kind, closed: c!.closed, pts: c!.lod[l] })));
   }
 
   get rivers(): RenderRiver[] {
     const l = this.lod;
-    return (this.riverCache[l] ??= this.cm.rivers.map((r) => ({ id: r.id, name: r.name, pts: r.lod[l], widths: r.widths[l] })));
+    return (this.riverCache[l] ??= this.cm.rivers.filter((r) => r.lod[l].length >= 4).map((r) => ({ id: r.id, name: r.name, pts: r.lod[l], widths: r.widths[l] })));
   }
 
   /** Region under a world point (wrap-aware), or -1. */

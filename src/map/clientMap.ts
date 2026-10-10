@@ -5,14 +5,19 @@
 // Not included (server-only, or revealed per turn through the filtered view):
 // resources, province values, start positions, Praga seeds, fairness, per-cell data.
 //
+// v2 — players never receive the full map: the server cuts it down to the regions the
+// player can see (filterClientMap / exaequo_map.filter_client_map). Hidden regions and
+// the borders between them become null; rivers are cut to their visible pieces.
+//
 // Geometry is stored as TOPOLOGY: border chains are simplified once (two levels of
 // detail) and every region ring is a list of chain references, so neighbouring
 // provinces always share exactly the same edge — no gaps at any zoom.
 import { GENERATOR_VERSION } from '../gen/generate';
 import type { BorderKind, Culture, GeneratedMap, LocalName, RegionKind, SeaKind, Terrain } from '../gen/types';
+import { RenderMap } from './renderMap';
 
 export const CLIENT_FORMAT = 'ex-aequo/client-map';
-export const CLIENT_FORMAT_VERSION = 1;
+export const CLIENT_FORMAT_VERSION = 2;
 
 /** Douglas–Peucker tolerances in map units: LOD 0 (world view) and LOD 1 (close-up). */
 export const LOD_TOLERANCE: [number, number] = [1.6, 0.25];
@@ -49,6 +54,9 @@ export interface ClientRiver {
   lod: [number[], number[]];
   /** Widths matching the points of each level of detail. */
   widths: [number[], number[]];
+  /** Region under each point of each level of detail (full map only; used to cut
+   *  rivers to the visible regions). A filtered map lists one entry per visible piece. */
+  regs?: [number[], number[]];
 }
 
 export interface TileSpec {
@@ -66,9 +74,15 @@ export interface ClientMap {
   generator: string;
   world: { width: number; height: number; wrapX: true };
   landmasses: { id: number; title?: LocalName; isContinent: boolean; culture?: Culture }[];
-  regions: ClientRegion[];
-  chains: ClientChain[];
+  /** Indexed by region id; null = not visible to this player (filtered maps only). */
+  regions: (ClientRegion | null)[];
+  /** Indexed by chain id; null = border between two hidden regions. */
+  chains: (ClientChain | null)[];
   rivers: ClientRiver[];
+  /** Typical province size in map units, from the FULL map (label sizing). */
+  spacing: number;
+  /** True when the server cut this map down to one player's view. */
+  partial?: boolean;
   tiles?: TileSpec;
 }
 
@@ -86,7 +100,9 @@ export function toClientMap(map: GeneratedMap, tiles?: TileSpec): ClientMap {
     const w = (keep: number[]) => keep.map((i) => Math.round(rv.widths[i] * 100) / 100);
     return { id: rv.id, name: rv.name, lod: [pick(k0), pick(k1)], widths: [w(k0), w(k1)] };
   });
-  return {
+  const land = map.regions.filter((r) => r.kind === 'land');
+  const spacing = Math.round((Math.sqrt(land.reduce((a, r) => a + r.area, 0) / Math.max(1, land.length)) / 5) * 1000) / 1000;
+  const cm: ClientMap = {
     format: CLIENT_FORMAT,
     formatVersion: CLIENT_FORMAT_VERSION,
     generator: GENERATOR_VERSION,
@@ -101,8 +117,19 @@ export function toClientMap(map: GeneratedMap, tiles?: TileSpec): ClientMap {
     })),
     chains,
     rivers,
+    spacing,
     tiles,
   };
+  // tag every river point with the region under it, so the server can cut rivers
+  const rm = new RenderMap(cm);
+  for (const rv of rivers) {
+    rv.regs = [0, 1].map((l) => {
+      const p = rv.lod[l], out: number[] = [];
+      for (let i = 0; i < p.length; i += 2) out.push(rm.pick(p[i], p[i + 1]));
+      return out;
+    }) as [number[], number[]];
+  }
+  return cm;
 }
 
 /** Douglas–Peucker, returns flat points. Endpoints (junctions) are always kept. */
