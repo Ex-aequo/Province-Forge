@@ -9,7 +9,11 @@
     "build": "vite build",
     "build:single": "vite build --mode single",
     "gen": "tsx tools/generate-cli.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "mapgen": "npm run -s build:cli && node build/cli/mapgen.js",
+    "build:cli": "esbuild tools/mapgen.ts tools/bake-worker.ts --bundle --platform=node --format=esm --target=node20 --outdir=build/cli --out-extension:.js=.js --external:@napi-rs/canvas --external:@resvg/resvg-js --log-level=warning",
+    "vectors": "tsx tools/make-vectors.ts",
+    "demo": "npm run -s build:cli && node build/cli/mapgen.js create --seed demo --out build/demo-bundle --max-level 2 && tsx tools/make-demo.ts build/demo-bundle dist/demo-map"
   },
   "dependencies": {
     "d3-delaunay": "^6.0.4",
@@ -20,6 +24,11 @@
     "@resvg/resvg-js": "^2.6.2",
     "@types/d3-delaunay": "^6.0.4",
     "@types/node": "^26.6.5",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "esbuild": "^0.28.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vite": "^8.3.4",

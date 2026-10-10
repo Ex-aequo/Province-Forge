@@ -1,7 +1,7 @@
 // SVG rendering of a generated map. Pure string building, so it runs in the browser
 // and headless (for tests / server-side export) alike.
 import { createRng } from '../gen/rng';
-import type { BorderChain, GeneratedMap, Region, River, Terrain } from '../gen/types';
+import type { BorderChain, GeneratedMap, Region, Terrain } from '../gen/types';
 
 export type ViewMode = 'terrain' | 'political' | 'praga' | 'resources' | 'starts' | 'terrainType' | 'landmass' | 'elevation';
 
@@ -38,7 +38,7 @@ export function ringPath(rings: number[][]): string {
   return d;
 }
 
-export function chainPath(chains: BorderChain[]): string {
+export function chainPath(chains: { pts: number[] }[]): string {
   let d = '';
   for (const c of chains) {
     d += 'M' + fmt(c.pts[0]) + ' ' + fmt(c.pts[1]) + 'L';
@@ -141,7 +141,7 @@ export function renderWorld(map: GeneratedMap, opt: RenderOptions): string {
 }
 
 /** Rivers as tapered strokes: segments bucketed by width, one path per bucket. */
-export function renderRivers(rivers: River[], opacity = 0.9): string {
+export function renderRivers(rivers: { pts: number[]; widths: number[] }[], opacity = 0.9): string {
   const buckets = new Map<number, string[]>();
   for (const r of rivers) {
     for (let i = 0; i + 3 < r.pts.length; i += 2) {

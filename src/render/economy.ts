@@ -1,5 +1,9 @@
 // Map modes for M4: resources and start positions. Drawn over the terrain raster.
-import type { GeneratedMap, Resource } from '../gen/types';
+// Resources come from the filtered view (only visible provinces); start positions
+// only exist in a game-master view.
+import type { ViewerState } from '../game/state';
+import type { Resource } from '../gen/types';
+import type { RenderMap } from '../map/renderMap';
 import { PALETTE, chainPath, fmt, ringPath } from './svg';
 
 export const RESOURCE_COLORS: Record<Resource, string> = {
@@ -15,7 +19,7 @@ export const RESOURCE_EN: Record<Resource, string> = {
 
 const nss = 'vector-effect="non-scaling-stroke"';
 
-function baseLines(map: GeneratedMap): string {
+function baseLines(map: RenderMap): string {
   const by = (k: string) => map.borders.filter((b) => b.kind === k);
   return `<path fill="none" stroke="rgba(30,22,14,0.35)" stroke-width="0.6" ${nss} d="${chainPath(by('land'))}"/>` +
     `<path fill="none" stroke="rgba(29,42,51,0.75)" stroke-width="1.1" ${nss} d="${chainPath(by('lakeshore'))}"/>` +
@@ -24,18 +28,19 @@ function baseLines(map: GeneratedMap): string {
 }
 
 /** Resource map: land dimmed, one disc per province (size = amount, rares ringed). */
-export function renderResources(map: GeneratedMap): string {
+export function renderResources(map: RenderMap, vs: ViewerState): string {
   const out: string[] = [];
   const land = map.regions.filter((r) => r.kind === 'land');
-  out.push(`<path fill="rgba(245,240,228,0.42)" d="${land.map((r) => ringPath(r.rings)).join('')}"/>`);
+  out.push(`<path fill="rgba(245,240,228,0.42)" d="${land.map((r) => ringPath(map.rings(r.id))).join('')}"/>`);
   out.push(baseLines(map));
   const discs: string[] = [];
   for (const r of land) {
-    if (!r.resource) continue;
+    const d = vs.details[r.id];
+    if (!d) continue;
     const [x, y] = r.label;
-    const rad = 4 + (r.amount ?? 1) * 2;
-    const rare = r.resource === 'gold' || r.resource === 'spices';
-    discs.push(`<circle cx="${fmt(x)}" cy="${fmt(y)}" r="${fmt(rad)}" fill="${RESOURCE_COLORS[r.resource]}" stroke="${rare ? '#2a1a05' : 'rgba(20,16,10,0.7)'}" stroke-width="${rare ? 1.8 : 0.9}"/>`);
+    const rad = 4 + d.amount * 2;
+    const rare = d.resource === 'gold' || d.resource === 'spices';
+    discs.push(`<circle cx="${fmt(x)}" cy="${fmt(y)}" r="${fmt(rad)}" fill="${RESOURCE_COLORS[d.resource]}" stroke="${rare ? '#2a1a05' : 'rgba(20,16,10,0.7)'}" stroke-width="${rare ? 1.8 : 0.9}"/>`);
     if (rare) discs.push(`<circle cx="${fmt(x)}" cy="${fmt(y)}" r="${fmt(rad + 2.6)}" fill="none" stroke="#ffcf33" stroke-width="1.1"/>`);
   }
   out.push(`<g class="res-discs">${discs.join('')}</g>`);
@@ -46,28 +51,31 @@ const SLOT_COLORS = ['#c0392b', '#2471a3', '#239b56', '#b9770e', '#7d3c98', '#17
 
 /** Start positions: player territories coloured, reserves hatched, capitals starred,
  *  Praga seeds marked. Value of each start printed at its capital. */
-export function renderStarts(map: GeneratedMap, lang: 'pt' | 'en'): string {
+export function renderStarts(map: RenderMap, vs: ViewerState, lang: 'pt' | 'en'): string {
+  const starts = vs.gm?.starts ?? [];
+  const slotOf = new Map<number, number>();
+  for (const st of starts) for (const id of st.provinces) slotOf.set(id, st.slot);
   const out: string[] = [];
   out.push(`<defs><pattern id="st-res" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(-45)"><rect width="8" height="8" fill="rgba(255,248,226,0.55)"/><rect width="2" height="8" fill="#a8781e"/></pattern></defs>`);
-  for (const st of map.starts) {
-    const d = st.provinces.map((id) => ringPath(map.regions[id].rings)).join('');
+  for (const st of starts) {
+    const d = st.provinces.map((id) => ringPath(map.rings(id))).join('');
     const fill = st.reserved ? 'url(#st-res)' : SLOT_COLORS[st.slot % SLOT_COLORS.length];
     out.push(`<path fill="${fill}" fill-opacity="${st.reserved ? 1 : 0.62}" d="${d}"/>`);
   }
   out.push(baseLines(map));
   const edges = map.borders.filter((b) => {
-    const sa = map.regions[b.a].startSlot, sb = b.b >= 0 ? map.regions[b.b].startSlot : undefined;
+    const sa = slotOf.get(b.a), sb = b.b >= 0 ? slotOf.get(b.b) : undefined;
     return sa !== sb && (sa !== undefined || sb !== undefined) && b.kind !== 'sea';
   });
   out.push(`<path fill="none" stroke="rgba(15,10,6,0.9)" stroke-width="1.8" ${nss} d="${chainPath(edges)}"/>`);
   const marks: string[] = [];
-  for (const st of map.starts) {
+  for (const st of starts) {
     const [x, y] = map.regions[st.capital].label;
     marks.push(star(x, y, 6.5, st.reserved ? '#a8781e' : '#fff8e6'));
     const label = st.reserved ? (lang === 'pt' ? `Reserva · ${fmt(st.value)}` : `Reserve · ${fmt(st.value)}`) : `${st.slot + 1} · ${fmt(st.value)}`;
     marks.push(`<text class="lbl-start" x="${fmt(x)}" y="${fmt(y + 13)}">${label}</text>`);
   }
-  for (const id of map.pragaSeeds) {
+  for (const id of vs.gm?.pragaSeeds ?? []) {
     const [x, y] = map.regions[id].label;
     marks.push(`<circle cx="${fmt(x)}" cy="${fmt(y)}" r="7" fill="#3f1430" stroke="#f4d6e4" stroke-width="1.2"/><path d="M${fmt(x - 3.5)} ${fmt(y - 3.5)}L${fmt(x + 3.5)} ${fmt(y + 3.5)}M${fmt(x + 3.5)} ${fmt(y - 3.5)}L${fmt(x - 3.5)} ${fmt(y + 3.5)}" stroke="#f4d6e4" stroke-width="1.6"/>`);
   }

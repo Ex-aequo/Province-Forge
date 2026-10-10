@@ -3,15 +3,17 @@ import { generateMap } from './gen/generate';
 import { toExportJson } from './gen/export';
 import type { GeneratedMap, GenParams, Region, Terrain } from './gen/types';
 import { DEFAULT_PARAMS, TERRAINS } from './gen/types';
-import { PALETTE, TERRAIN_COLORS, renderAdjacency, renderCells, renderIds, renderOutline, renderSeam, renderStandalone, renderWorld, type ViewMode } from './render/svg';
+import { TERRAIN_COLORS, renderAdjacency, renderCells, renderIds, renderSeam, renderStandalone, renderWorld, type ViewMode } from './render/svg';
 import { buildControls } from './ui/controls';
-import { TileLayer } from './ui/tiles';
 import { filterForViewer, type TurnState, type ViewerState } from './game/state';
 import { makeTestState } from './game/testState';
-import { LABEL_CSS, renderPolitical, type Lang } from './render/political';
-import { ECONOMY_CSS, RESOURCE_COLORS, RESOURCE_PT, renderResources, renderStarts } from './render/economy';
+import { LABEL_CSS, type Lang } from './render/political';
+import { ECONOMY_CSS, RESOURCE_COLORS, RESOURCE_PT } from './render/economy';
 import { RESOURCES } from './gen/types';
-import { Viewport } from './ui/viewport';
+import { toClientMap } from './map/clientMap';
+import { RenderMap } from './map/renderMap';
+import { MapView, type MapMode } from './view/MapView';
+import { WorkerTileSource } from './view/tileSources';
 
 export const TERRAIN_PT: Record<Terrain, string> = {
   plains: 'Planície', forest: 'Floresta', hills: 'Colinas', mountains: 'Montanha',
@@ -20,7 +22,6 @@ export const TERRAIN_PT: Record<Terrain, string> = {
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const STORE_KEY = 'province-forge:params:v4';
-const SVGNS = 'http://www.w3.org/2000/svg';
 
 // ------------------------------------------------------------------ state
 const params: GenParams = loadParams();
@@ -31,7 +32,6 @@ let turnState: TurnState | null = null;
 let vstate: ViewerState | null = null;
 let viewer: string | null = null;
 const test = { progress: 0.4, praga: 0.3, salt: 0 };
-let selected = -1;
 let busy = false;
 
 function loadParams(): GenParams {
@@ -50,84 +50,30 @@ function saveParams() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(params)); } catch { /* ignore */ }
 }
 
-// ------------------------------------------------------------------ svg scaffold
-const svg = $('map') as unknown as SVGSVGElement;
-const mk = (tag: string, attrs: Record<string, string | number> = {}) => {
-  const el = document.createElementNS(SVGNS, tag);
-  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v));
-  return el;
-};
-const bg = mk('rect', { fill: PALETTE.sea });
-const defs = mk('defs');
-const gTileBase = mk('g', { id: 'tbase' }) as SVGGElement;
-const gTileDetail = mk('g', { class: 'tile-detail' }) as SVGGElement;
-const gWorld = mk('g', { id: 'world' });
-const gOverlay = mk('g', { id: 'ovl' });
-const gSel = mk('g', { id: 'sel' });
-defs.append(gTileBase, gWorld, gOverlay, gSel);
-const labelStyle = mk('style');
-labelStyle.textContent = LABEL_CSS + ECONOMY_CSS;
-svg.append(labelStyle, bg, defs);
-svg.setAttribute('data-lod', '0');
-const uses: SVGElement[] = [];
-for (const id of ['tbase', 'world', 'ovl', 'sel']) {
-  for (let k = 0; k < 3; k++) {
-    const u = mk('use', { href: `#${id}` });
-    u.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', `#${id}`);
-    if (id === 'tbase') u.setAttribute('class', 'tile-base');
-    uses.push(u);
-    svg.append(u);
-  }
-  // detail tiles sit above the base layer and below the vector world
-  if (id === 'tbase') svg.append(gTileDetail);
-}
-const tiles = new TileLayer(gTileBase, gTileDetail);
-function placeCopies(W: number, H: number) {
-  // sea only inside the world's north/south bounds; beyond the poles the darker stage shows
-  bg.setAttribute('x', String(-W)); bg.setAttribute('y', '0');
-  bg.setAttribute('width', String(W * 3)); bg.setAttribute('height', String(H));
-  uses.forEach((u, i) => u.setAttribute('x', String(((i % 3) - 1) * W)));
-}
-
-// ------------------------------------------------------------------ viewport + interaction
+// ------------------------------------------------------------------ map view (same component as the game)
 const hud = $('hud');
-const viewport = new Viewport(svg, {
-  onHover: (wx, wy, sx, sy) => {
-    if (!map || busy) return;
-    const r = regionAt(wx, wy);
-    if (!r) { hud.hidden = true; return; }
-    hud.textContent = describeShort(r);
-    hud.hidden = false;
-    const stage = svg.getBoundingClientRect();
-    const left = Math.min(sx + 14, stage.width - hud.offsetWidth - 8);
-    const top = Math.min(sy + 14, stage.height - hud.offsetHeight - 8);
-    hud.style.left = `${Math.max(8, left)}px`;
-    hud.style.top = `${Math.max(8, top)}px`;
-  },
-  onLeave: () => { hud.hidden = true; },
-  onView: (v) => {
-    tiles.update(v);
-    // label level of detail: far / mid / close (zoom relative to seeing the whole world)
-    const rel = v.zoom / (v.w / (map?.width ?? 4000));
-    svg.setAttribute('data-lod', rel < 2.2 ? '0' : rel < 4.5 ? '1' : '2');
-  },
-  onClick: (wx, wy) => {
-    if (!map || busy) return;
-    const r = regionAt(wx, wy);
-    select(r ? r.id : -1);
-  },
-});
-
-function regionAt(wx: number, wy: number): Region | null {
-  if (!map || wy < 0 || wy > map.height) return null;
-  const c = map.findCell(wx, wy);
-  const id = map.cellRegion[c];
-  return id >= 0 ? map.regions[id] : null;
+let mv: MapView | null = null;
+function ensureView(rm: RenderMap, tiles: WorkerTileSource) {
+  if (mv) { mv.setMap(rm, tiles, true); return mv; }
+  mv = new MapView($('map-host'), {
+    map: rm, tiles, lang, mode: VIEW_MODES.includes(mode as MapMode) ? (mode as MapMode) : 'terrain',
+    onHover: (id, sx, sy) => {
+      if (!map || busy || id === null) { hud.hidden = true; return; }
+      hud.textContent = describeShort(map.regions[id]);
+      hud.hidden = false;
+      const stage = $('map-host').getBoundingClientRect();
+      hud.style.left = `${Math.max(8, Math.min(sx + 14, stage.width - hud.offsetWidth - 8))}px`;
+      hud.style.top = `${Math.max(8, Math.min(sy + 14, stage.height - hud.offsetHeight - 8))}px`;
+    },
+    onSelect: (id) => { if (map && !busy) select(id ?? -1); },
+  });
+  return mv;
 }
+const VIEW_MODES: MapMode[] = ['political', 'praga', 'terrain', 'terrainType', 'resources', 'starts'];
 
 const RASTER_MODES: ViewMode[] = ['terrain', 'political', 'praga', 'resources', 'starts'];
 const PRAGA_PT = ['sem Praga', 'Praga presente', 'infestada', 'devastada'];
-const isHidden = (r: Region) => !!vstate && (mode === 'political' || mode === 'praga') && !vstate.visible.includes(r.id) && (r.kind === 'land' || r.kind === 'sea');
+const isHidden = (r: Region) => !!vstate && vstate.viewer !== null && !vstate.visible.includes(r.id) && (r.kind === 'land' || r.kind === 'sea');
 const countryById = (id: string | null | undefined) => (id ? vstate?.countries.find((c) => c.id === id) : undefined);
 function regionName(r: Region) {
   if (isHidden(r)) return 'Terra incógnita';
@@ -150,26 +96,26 @@ function describeShort(r: Region) {
   if (r.kind === 'lake' || r.kind === 'ice') return `${regionName(r)} · intransitável`;
   if (r.kind === 'sea') return `${regionName(r)} · ${r.neighbors.length} vizinhos`;
   const pol = politicsLine(r);
-  const res = r.resource ? ` · ${RESOURCE_PT[r.resource]} ×${r.amount}` : '';
+  const d = vstate?.details[r.id];
+  const res = d ? ` · ${RESOURCE_PT[d.resource]} ×${d.amount}` : '';
   return `${regionName(r)} · ${TERRAIN_PT[r.terrain ?? 'plains']}${res}${pol ? ` · ${pol}` : ''}`;
 }
 
 // ------------------------------------------------------------------ selection
 const selBox = $('selection');
+let selected = -1;
 function select(id: number, center = false) {
   if (!map) return;
   selected = id;
-  if (id < 0) { gSel.innerHTML = ''; selBox.hidden = true; return; }
+  if (id < 0) { mv?.select(null); selBox.hidden = true; return; }
   const r = map.regions[id];
   if (isHidden(r)) {
-    gSel.innerHTML = '';
+    mv?.select(null);
     selBox.innerHTML = '<h3>Terra incógnita</h3><div class="meta">Ainda não explorada por este jogador.</div>';
     selBox.hidden = false;
     return;
   }
-  gSel.innerHTML =
-    renderOutline(map, r.neighbors, '#ffd166', 1.4) +
-    renderOutline(map, [id], '#ffffff', 2.6, 'rgba(255,255,255,0.18)');
+  mv?.select(id, center);
   const lm = r.kind === 'land' ? (map.landmasses[r.landmass]?.title?.[lang] ?? map.landmasses[r.landmass]?.name) : null;
   const chips = r.neighbors.map((o) => {
     const q = map!.regions[o];
@@ -181,35 +127,32 @@ function select(id: number, center = false) {
     ? `<div class="meta"><i class="sw" style="background:${TERRAIN_COLORS[r.terrain ?? 'plains']}"></i>${TERRAIN_PT[r.terrain ?? 'plains']}${r.hasRiver ? ' · atravessada por rio' : ''}${r.riverNeighbors.length ? ` · ${r.riverNeighbors.length} ${r.riverNeighbors.length > 1 ? 'fronteiras' : 'fronteira'} de rio (≈)` : ''}</div>`
     : '';
   const pol = politicsLine(r);
-  const st = r.startSlot !== undefined ? map.starts.find((x) => x.slot === r.startSlot) : undefined;
-  const ecoLine = r.kind === 'land' && r.resource
-    ? `<div class="meta"><i class="sw round" style="background:${RESOURCE_COLORS[r.resource]}"></i>${RESOURCE_PT[r.resource]} ×${r.amount} · valor ${num(r.value ?? 0, 1)}${st ? ` · ${st.reserved ? 'posição de reserva' : `posição inicial ${st.slot + 1}`}${st.capital === r.id ? ' (capital)' : ''}` : ''}</div>`
+  // resources only as the viewer knows them; values and start positions only for the GM
+  const det = vstate?.details[r.id];
+  const st = vstate?.gm && r.startSlot !== undefined ? vstate.gm.starts.find((x) => x.slot === r.startSlot) : undefined;
+  const ecoLine = r.kind === 'land' && det
+    ? `<div class="meta"><i class="sw round" style="background:${RESOURCE_COLORS[det.resource]}"></i>${RESOURCE_PT[det.resource]} ×${det.amount}${det.value !== undefined ? ` · valor ${num(det.value, 1)}` : ''}${st ? ` · ${st.reserved ? 'posição de reserva' : `posição inicial ${st.slot + 1}`}${st.capital === r.id ? ' (capital)' : ''}` : ''}</div>`
     : '';
   selBox.innerHTML =
     `<h3>${regionName(r)}</h3>` + (pol ? `<div class="meta">${pol}</div>` : '') + terrainLine + ecoLine +
     `<div class="meta">${lm ? `${lm} · ` : ''}${r.cells.length} células · área ${Math.round(r.area).toLocaleString('pt-PT')}${r.kind === 'land' && r.coastal ? ' · costeira' : ''}${crossSeam ? ` · ${crossSeam} ${crossSeam > 1 ? 'ligações' : 'ligação'} através da junção` : ''}</div>` +
     (r.neighbors.length ? `<div class="meta">Vizinhos (${r.neighbors.length}) — contorno amarelo</div><div class="chips">${chips}</div>` : '<div class="meta">Intransitável: não faz parte do grafo de movimento.</div>');
   selBox.hidden = false;
-  if (center) viewport.centerOn(nearestCopyX(r.label[0]), r.label[1]);
 }
 selBox.addEventListener('click', (e) => {
   const b = (e.target as HTMLElement).closest('.chip') as HTMLElement | null;
   if (b) select(Number(b.dataset.id), true);
 });
-function nearestCopyX(x: number) {
-  if (!map) return x;
-  const W = map.width, cx = viewport.state.cx;
-  return x + Math.round((cx - x) / W) * W;
-}
 
 // ------------------------------------------------------------------ rendering
 function rebuildState(newState = true) {
   if (!map) return;
   if (newState || !turnState) turnState = makeTestState(map, { seed: `${params.seed}#${test.salt}`, progress: test.progress, praga: test.praga, countries: 25 });
   if (viewer && !turnState.countries.some((c) => c.id === viewer)) viewer = null;
-  vstate = filterForViewer(map, turnState, viewer);
+  // the preview tool is a game-master tool: "no viewer" = GM view (sees everything)
+  vstate = filterForViewer(map, turnState, viewer, { gm: viewer === null });
   const sel = $('view-as') as HTMLSelectElement;
-  sel.innerHTML = '<option value="">Observador (vê tudo)</option>' +
+  sel.innerHTML = '<option value="">Mestre de jogo (vê tudo)</option>' +
     turnState.countries.map((c) => {
       const n = Object.values(turnState!.provinces).filter((p) => p.owner === c.id).length;
       return `<option value="${c.id}"${c.id === viewer ? ' selected' : ''}>${c.fullName[lang]} · ${n} prov.</option>`;
@@ -218,12 +161,11 @@ function rebuildState(newState = true) {
 }
 
 function renderAll() {
-  if (!map) return;
-  gWorld.innerHTML = mode === 'political' || mode === 'praga'
-    ? renderPolitical(map, vstate!, { lang, mode })
-    : mode === 'resources' ? renderResources(map)
-    : mode === 'starts' ? renderStarts(map, lang)
-    : renderWorld(map, { mode });
+  if (!map || !mv) return;
+  mv.setLang(lang);
+  mv.setView(vstate);
+  if (VIEW_MODES.includes(mode as MapMode)) { mv.setCustomWorld(null); mv.setMode(mode as MapMode); }
+  else mv.setCustomWorld(renderWorld(map, { mode }), false); // generator debug modes
   renderOverlays();
   select(selected >= 0 && selected < map.regions.length ? selected : -1);
 }
@@ -234,7 +176,7 @@ function renderOverlays() {
   if (($('ov-adj') as HTMLInputElement).checked) s += renderAdjacency(map);
   if (($('ov-ids') as HTMLInputElement).checked) s += renderIds(map);
   if (($('ov-seam') as HTMLInputElement).checked) s += renderSeam(map);
-  gOverlay.innerHTML = s;
+  mv?.setOverlay(s);
   $('adj-legend').hidden = !($('ov-adj') as HTMLInputElement).checked;
 }
 
@@ -297,11 +239,12 @@ async function regenerate(keepView = true) {
   try {
     params.seed = ($('seed') as HTMLInputElement).value.trim() || DEFAULT_PARAMS.seed;
     map = generateMap(params);
-    placeCopies(map.width, map.height);
-    viewport.setWorld(map.width, map.height, keepView);
-    tiles.setVisible(RASTER_MODES.includes(mode));
-    void tiles.setMap(map);
+    // exactly what the game client receives: the slim client map + tiles
+    const rm = new RenderMap(toClientMap(map));
+    selected = -1;
     rebuildState(true);
+    ensureView(rm, new WorkerTileSource(map));
+    if (!keepView) mv!.fit();
     renderAll();
     renderStats();
     saveParams();
@@ -339,14 +282,20 @@ async function saveFile(filename: string, data: string, mime: string) {
 }
 const safeName = () => params.seed.replace(/[^a-z0-9-_]+/gi, '-').toLowerCase() || 'world';
 $('export-json').addEventListener('click', () => { if (map) saveFile(`${safeName()}.static-map.json`, JSON.stringify(toExportJson(map)), 'application/json'); });
+$('export-client').addEventListener('click', () => { if (map) saveFile(`${safeName()}.client-map.json`, JSON.stringify(toClientMap(map)), 'application/json'); });
 $('export-svg').addEventListener('click', async () => {
-  if (!map) return;
+  if (!map || !mv) return;
   const raster = RASTER_MODES.includes(mode);
-  const img = raster ? await tiles.baseImageDataUrl() : undefined;
+  const img = raster ? await mv.baseImageDataUrl() : undefined;
   if (raster && !img) { $('export-msg').textContent = 'O terreno ainda está a ser desenhado. Tente de novo dentro de momentos.'; return; }
-  const content = mode === 'political' || mode === 'praga' ? renderPolitical(map, vstate!, { lang, mode })
-    : mode === 'resources' ? renderResources(map) : mode === 'starts' ? renderStarts(map, lang) : undefined;
-  saveFile(`${safeName()}-${mode}.svg`, renderStandalone(map, { mode }, '', img ?? undefined, content, LABEL_CSS + ECONOMY_CSS), 'image/svg+xml');
+  // export at full detail
+  const rm = mv.renderMap, lod = rm.lod;
+  rm.lod = 1;
+  mv.setMode(mode as MapMode);
+  const content = mv.worldSvg();
+  rm.lod = lod;
+  mv.setMode(mode as MapMode);
+  saveFile(`${safeName()}-${mode}.svg`, renderStandalone(map, { mode }, '', img ?? undefined, VIEW_MODES.includes(mode as MapMode) ? content : undefined, LABEL_CSS + ECONOMY_CSS), 'image/svg+xml');
 });
 $('export-state').addEventListener('click', () => {
   if (!map || !turnState) return;
@@ -394,17 +343,16 @@ $('modes').addEventListener('click', (e) => {
   if (!b || !map) return;
   mode = b.dataset.mode as ViewMode;
   for (const x of $('modes').querySelectorAll('button')) x.setAttribute('aria-checked', String(x === b));
-  tiles.setVisible(RASTER_MODES.includes(mode));
   renderAll();
 });
 for (const id of ['ov-cells', 'ov-ids', 'ov-adj', 'ov-seam']) $(id).addEventListener('change', renderOverlays);
 
-$('zoom-in').addEventListener('click', () => viewport.zoomBy(1.6));
-$('zoom-out').addEventListener('click', () => viewport.zoomBy(1 / 1.6));
-$('zoom-fit').addEventListener('click', () => viewport.fit());
+$('zoom-in').addEventListener('click', () => mv?.zoomBy(1.6));
+$('zoom-out').addEventListener('click', () => mv?.zoomBy(1 / 1.6));
+$('zoom-fit').addEventListener('click', () => mv?.fit());
 window.addEventListener('keydown', (e) => { if (e.key === 'Escape') select(-1); });
 
 // console handle for debugging: forge.map, forge.select(id), forge.viewport
-(window as any).forge = { get map() { return map; }, select: (id: number) => select(id, true), viewport };
+(window as any).forge = { get map() { return map; }, select: (id: number) => select(id, true), get viewport() { return mv?.viewport; }, get view() { return mv; } };
 
 regenerate(false);

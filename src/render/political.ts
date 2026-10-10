@@ -3,7 +3,7 @@
 // zoom-dependent place labels. Drawn from  static map + viewer-filtered turn state.
 // Pure string building: runs in the game client, the preview tool and Node.
 import type { ViewerState } from '../game/state';
-import type { GeneratedMap, Region } from '../gen/types';
+import type { RenderBorder, RenderMap, RenderRegion } from '../map/renderMap';
 import { PALETTE, chainPath, fmt, renderRivers, ringPath } from './svg';
 
 export type Lang = 'pt' | 'en';
@@ -37,7 +37,7 @@ const GREY = '#8c8f8b';
 const PRAGA_HEAT = ['rgba(236, 229, 211, 0.55)', '#c99a8e', '#94455a', '#3f1430'];
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
 
-export function renderPolitical(map: GeneratedMap, vs: ViewerState, opt: PoliticalOptions): string {
+export function renderPolitical(map: RenderMap, vs: ViewerState, opt: PoliticalOptions): string {
   const out: string[] = [];
   const nss = 'vector-effect="non-scaling-stroke"';
   const regions = map.regions;
@@ -68,8 +68,9 @@ export function renderPolitical(map: GeneratedMap, vs: ViewerState, opt: Politic
   defs.push(`<pattern id="reserved-hatch" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(-45)"><rect width="8" height="8" fill="rgba(255,248,226,0.28)"/><rect width="1.6" height="8" fill="rgba(150,112,40,0.55)"/></pattern>`);
   out.push(`<defs>${defs.join('')}</defs>`);
   // reserved start positions (for late joiners) that nobody holds yet
-  const reservedSlots = new Set(vs.reservedSlots ?? []);
-  const reservedStarts = map.starts.filter((st) => reservedSlots.has(st.slot) && st.provinces.every((id) => !vs.provinces[id]?.owner));
+  const reservedStarts = (vs.reserved ?? []).filter((st) => st.provinces.every((id) => !vs.provinces[id]?.owner));
+  const reservedSlotOf = new Map<number, number>();
+  for (const st of reservedStarts) for (const id of st.provinces) reservedSlotOf.set(id, st.slot);
 
   // ---- fills
   const fills: string[] = ['<g class="pol-fills">'];
@@ -82,7 +83,7 @@ export function renderPolitical(map: GeneratedMap, vs: ViewerState, opt: Politic
       if (o) (byOwner.get(o) ?? byOwner.set(o, []).get(o)!).push(r.id);
     }
     for (const [o, ids] of byOwner) {
-      fills.push(`<path fill="${colors.get(o) ?? '#777'}" fill-opacity="0.74" fill-rule="evenodd" d="${ids.map((i) => ringPath(regions[i].rings)).join('')}"/>`);
+      fills.push(`<path fill="${colors.get(o) ?? '#777'}" fill-opacity="0.74" fill-rule="evenodd" d="${ids.map((i) => ringPath(map.rings(i))).join('')}"/>`);
     }
     // occupation stripes
     const occ = new Map<string, number[]>();
@@ -91,21 +92,21 @@ export function renderPolitical(map: GeneratedMap, vs: ViewerState, opt: Politic
       if (!p || !visible.has(r.id) || !p.controller || p.controller === p.owner) continue;
       (occ.get(p.controller) ?? occ.set(p.controller, []).get(p.controller)!).push(r.id);
     }
-    for (const [c, ids] of occ) fills.push(`<path fill="url(#occ-${c})" fill-opacity="0.95" d="${ids.map((i) => ringPath(regions[i].rings)).join('')}"/>`);
+    for (const [c, ids] of occ) fills.push(`<path fill="url(#occ-${c})" fill-opacity="0.95" d="${ids.map((i) => ringPath(map.rings(i))).join('')}"/>`);
     // reserved territories: light hatching (drawn under Praga and borders)
     for (const st of reservedStarts) {
       const ids = st.provinces.filter((id) => visible.has(id));
-      if (ids.length) fills.push(`<path fill="url(#reserved-hatch)" d="${ids.map((i) => ringPath(regions[i].rings)).join('')}"/>`);
+      if (ids.length) fills.push(`<path fill="url(#reserved-hatch)" d="${ids.map((i) => ringPath(map.rings(i))).join('')}"/>`);
     }
     // Praga as a hatched overlay
     for (const lvl of [1, 2, 3]) {
       const ids = regions.filter((r) => visible.has(r.id) && prov(r.id)?.praga === lvl).map((r) => r.id);
-      if (ids.length) fills.push(`<path fill="url(#praga-${lvl})" d="${ids.map((i) => ringPath(regions[i].rings)).join('')}"/>`);
+      if (ids.length) fills.push(`<path fill="url(#praga-${lvl})" d="${ids.map((i) => ringPath(map.rings(i))).join('')}"/>`);
     }
   } else {
     for (const lvl of [0, 1, 2, 3]) {
       const ids = regions.filter((r) => r.kind === 'land' && visible.has(r.id) && (prov(r.id)?.praga ?? 0) === lvl).map((r) => r.id);
-      if (ids.length) fills.push(`<path fill="${PRAGA_HEAT[lvl]}" fill-opacity="${lvl ? 0.86 : 1}" d="${ids.map((i) => ringPath(regions[i].rings)).join('')}"/>`);
+      if (ids.length) fills.push(`<path fill="${PRAGA_HEAT[lvl]}" fill-opacity="${lvl ? 0.86 : 1}" d="${ids.map((i) => ringPath(map.rings(i))).join('')}"/>`);
     }
   }
   fills.push('</g>');
@@ -114,7 +115,7 @@ export function renderPolitical(map: GeneratedMap, vs: ViewerState, opt: Politic
   // ---- rivers, then borders by hierarchy
   out.push(renderRivers(map.rivers, 0.9));
   const ownerOf = (id: number) => (regions[id].kind === 'land' ? prov(id)?.owner ?? null : null);
-  const countryB: typeof map.borders = [], provB: typeof map.borders = [];
+  const countryB: RenderBorder[] = [], provB: RenderBorder[] = [];
   for (const b of map.borders) {
     if (b.kind !== 'land') continue;
     if (ownerOf(b.a) !== ownerOf(b.b)) countryB.push(b); else provB.push(b);
@@ -130,8 +131,8 @@ export function renderPolitical(map: GeneratedMap, vs: ViewerState, opt: Politic
   // reserved outline: dashed gold around each reserved territory
   if (reservedStarts.length) {
     const edges = map.borders.filter((b) => {
-      const sa = regions[b.a].startSlot, sb = b.b >= 0 ? regions[b.b].startSlot : undefined;
-      return sa !== sb && ((sa !== undefined && reservedSlots.has(sa)) || (sb !== undefined && reservedSlots.has(sb)));
+      const sa = reservedSlotOf.get(b.a), sb = b.b >= 0 ? reservedSlotOf.get(b.b) : undefined;
+      return sa !== sb;
     });
     out.push(`<path fill="none" stroke="#a8781e" stroke-width="1.6" stroke-dasharray="5 3" ${nss} d="${chainPath(edges)}"/>`);
   }
@@ -139,7 +140,7 @@ export function renderPolitical(map: GeneratedMap, vs: ViewerState, opt: Politic
   // ---- terra incognita on top of everything it hides
   const hidden = regions.filter((r) => !visible.has(r.id)).map((r) => r.id);
   if (hidden.length) {
-    out.push(`<path class="fog" fill="${GREY}" stroke="${GREY}" stroke-width="0.8" d="${hidden.map((i) => ringPath(regions[i].rings)).join('')}"/>`);
+    out.push(`<path class="fog" fill="${GREY}" stroke="${GREY}" stroke-width="0.8" d="${hidden.map((i) => ringPath(map.rings(i))).join('')}"/>`);
     const edge = map.borders.filter((b) => b.b >= 0 && visible.has(b.a) !== visible.has(b.b));
     out.push(`<path fill="none" stroke="rgba(70, 72, 68, 0.7)" stroke-width="1.2" ${nss} d="${chainPath(edge)}"/>`);
   }
@@ -150,7 +151,7 @@ export function renderPolitical(map: GeneratedMap, vs: ViewerState, opt: Politic
 
 // ------------------------------------------------------------------------------ labels
 
-function renderLabels(map: GeneratedMap, vs: ViewerState, visible: Set<number>, lang: Lang): string {
+function renderLabels(map: RenderMap, vs: ViewerState, visible: Set<number>, lang: Lang): string {
   const out: string[] = [];
   const regions = map.regions;
   const W = map.width;
@@ -176,8 +177,7 @@ function renderLabels(map: GeneratedMap, vs: ViewerState, visible: Set<number>, 
     let len = 0;
     for (let i = 2; i < rv.pts.length; i += 2) len += Math.hypot(rv.pts[i] - rv.pts[i - 2], rv.pts[i + 1] - rv.pts[i - 1]);
     const mid = Math.floor(rv.pts.length / 4) * 2;
-    const cell = map.findCell(rv.pts[mid], rv.pts[mid + 1]);
-    if (!visible.has(map.cellRegion[cell])) continue;
+    if (!visible.has(map.pick(rv.pts[mid], rv.pts[mid + 1]))) continue;
     const cur = best.get(rv.id);
     if (len > 140 && (!cur || len > cur.len)) best.set(rv.id, { len, pts: rv.pts });
   }
@@ -200,7 +200,7 @@ function renderLabels(map: GeneratedMap, vs: ViewerState, visible: Set<number>, 
   const placed: { x0: number; y0: number; x1: number; y1: number; pts: number[]; h: number }[] = [];
   const cands = vs.countries.map((c, ci) => ({ c, ci, lab: countryLabel(map, vs, c.id, visible, W) }))
     .filter((o) => o.lab)
-    .sort((a, b) => b.lab!.cells - a.lab!.cells);
+    .sort((a, b) => b.lab!.area - a.lab!.area);
   for (const { c, ci, lab } of cands) {
     const L = lab!;
     const text = c.name[lang].toUpperCase();
@@ -238,11 +238,10 @@ function renderLabels(map: GeneratedMap, vs: ViewerState, visible: Set<number>, 
     country.push(`<text class="${cls}" font-size="${fmt(fs)}" letter-spacing="${fmt(spacing)}" stroke-width="${fmt(fs * 0.09)}"><textPath href="#${pid}" startOffset="50%" text-anchor="middle">${esc(text)}</textPath></text>`);
   }
   out.push(`<defs>${cdefs.join('')}</defs><g class="lbl-countries">${country.join('')}</g>`);
-  const rs = new Set(vs.reservedSlots ?? []);
   const res: string[] = [];
-  for (const st of map.starts) {
-    if (!rs.has(st.slot) || !visible.has(st.capital) || st.provinces.some((id) => vs.provinces[id]?.owner)) continue;
-    const [x, y] = regions[st.capital].label;
+  for (const st of vs.reserved ?? []) {
+    if (!st.provinces.length || st.provinces.some((id) => vs.provinces[id]?.owner)) continue;
+    const [x, y] = regions[st.provinces[0]].label;
     res.push(`<text class="lbl-reserved" x="${fmt(x)}" y="${fmt(y)}">${lang === 'pt' ? 'RESERVADO' : 'RESERVED'}</text>`);
   }
   out.push(`<g class="lbl-countries">${res.join('')}</g>`);
@@ -259,29 +258,31 @@ function reverse(p: number[]) {
  * Curved label path for a country: principal axis of its largest contiguous territory,
  * with a quadratic fitted through the middle of the territory along that axis.
  */
-export function countryLabel(map: GeneratedMap, vs: ViewerState, cid: string, visible: Set<number>, W: number):
-  { d: string; pts: number[]; length: number; thickness: number; cells: number; area: number } | null {
+export function countryLabel(map: RenderMap, vs: ViewerState, cid: string, visible: Set<number>, W: number):
+  { d: string; pts: number[]; length: number; thickness: number; area: number } | null {
   const regions = map.regions;
   const owned = new Set<number>();
   for (const [id, p] of Object.entries(vs.provinces)) if (p.owner === cid && visible.has(Number(id))) owned.add(Number(id));
   if (!owned.size) return null;
   // largest contiguous part (land adjacency)
-  let bestPart: number[] = [], bestCells = 0;
+  let bestPart: number[] = [], bestArea = 0;
   const seen = new Set<number>();
   for (const s of owned) {
     if (seen.has(s)) continue;
     const part = [s]; seen.add(s);
     for (let h = 0; h < part.length; h++) for (const o of regions[part[h]].neighbors) if (owned.has(o) && !seen.has(o)) { seen.add(o); part.push(o); }
-    const cells = part.reduce((a, id) => a + regions[id].cells.length, 0);
-    if (cells > bestCells) { bestCells = cells; bestPart = part; }
+    const area = part.reduce((a, id) => a + regions[id].area, 0);
+    if (area > bestArea) { bestArea = area; bestPart = part; }
   }
-  // cell sites, unwrapped around the first one
+  // sample points: each province's outline (LOD 0) plus its label point weighted by
+  // area, unwrapped around the first province
   const xs: number[] = [], ys: number[] = [];
-  const x0 = map.cellX[regions[bestPart[0]].cells[0]];
-  for (const id of bestPart) for (const c of regions[id].cells) {
-    let x = map.cellX[c];
-    x += Math.round((x0 - x) / W) * W;
-    xs.push(x); ys.push(map.cellY[c]);
+  const x0 = regions[bestPart[0]].label[0];
+  const add = (x: number, y: number) => { xs.push(x + Math.round((x0 - x) / W) * W); ys.push(y); };
+  for (const id of bestPart) {
+    for (const ring of map.rings(id, 0)) for (let i = 0; i < ring.length; i += 2) add(ring[i], ring[i + 1]);
+    const w = Math.max(1, Math.round(regions[id].area / (map.spacing * map.spacing * 4)));
+    for (let k = 0; k < w; k++) add(regions[id].label[0], regions[id].label[1]);
   }
   const n = xs.length;
   if (n < 3) return null;
@@ -310,7 +311,7 @@ export function countryLabel(map: GeneratedMap, vs: ViewerState, cid: string, vi
     if (t[i] < binMin[b]) binMin[b] = t[i];
     if (t[i] > binMax[b]) binMax[b] = t[i];
   }
-  const spacing = Math.sqrt((map.width * map.height) / map.cellX.length);
+  const spacing = map.spacing;
   const bs: number[] = [], bt: number[] = [], th: number[] = [];
   for (let b = 0; b < K; b++) {
     if (!Number.isFinite(binMin[b])) continue;
@@ -335,17 +336,15 @@ export function countryLabel(map: GeneratedMap, vs: ViewerState, cid: string, vi
       const tt = a + b1 * ss + c * ss * ss;
       const px = mx + ss * ux + tt * vx, py = my + ss * uy + tt * vy;
       raw.push(px, py);
-      const cell = map.findCell(px, py);
-      if (partSet.has(map.cellRegion[cell])) inside++;
+      if (partSet.has(map.pick(px, py))) inside++;
     }
     if (inside / (STEPS + 1) >= 0.85) break;
     half *= 0.82;
   }
   const thSorted = [...th].sort((p, q) => p - q);
   const thickness = thSorted[Math.floor(thSorted.length / 2)] ?? spacing;
-  const area = bestPart.reduce((s2, id) => s2 + regions[id].area, 0);
   const d = 'M' + Array.from({ length: raw.length / 2 }, (_, i) => `${fmt(raw[2 * i])},${fmt(raw[2 * i + 1])}`).join(' L');
-  return { d, pts: raw, length: 2 * half, thickness, cells: bestCells, area };
+  return { d, pts: raw, length: 2 * half, thickness, area: bestArea };
 }
 
 function fitQuadratic(x: number[], y: number[]): [number, number, number] {
@@ -370,6 +369,6 @@ function fitQuadratic(x: number[], y: number[]): [number, number, number] {
 }
 
 /** Province / sea display name in the chosen language, with fallback. */
-export function regionTitle(r: Region, lang: Lang): string {
+export function regionTitle(r: RenderRegion, lang: Lang): string {
   return r.name?.[lang] ?? `#${r.id}`;
 }

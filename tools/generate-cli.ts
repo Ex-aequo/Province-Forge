@@ -15,6 +15,8 @@ import { filterForViewer } from '../src/game/state';
 import { makeTestState } from '../src/game/testState';
 import { LABEL_CSS, renderPolitical } from '../src/render/political';
 import { ECONOMY_CSS, renderResources, renderStarts } from '../src/render/economy';
+import { toClientMap } from '../src/map/clientMap';
+import { RenderMap } from '../src/map/renderMap';
 
 const seed = process.argv[2] ?? DEFAULT_PARAMS.seed;
 const out = process.argv[3] ?? 'out';
@@ -52,14 +54,16 @@ if (['terrain', 'political', 'praga', 'resources', 'starts'].includes(mode)) {
 }
 
 let content: string | undefined;
+const rm = new RenderMap(toClientMap(map));
+const state = makeTestState(map, { seed, progress: Number(process.env.PROGRESS ?? 0.4), praga: Number(process.env.PRAGA ?? 0.35), countries: 25 });
+const viewerId = process.env.VIEWER ?? null;
+const vs = filterForViewer(map, state, viewerId, { gm: viewerId === null });
 if (mode === 'political' || mode === 'praga') {
-  const state = makeTestState(map, { seed, progress: Number(process.env.PROGRESS ?? 0.4), praga: Number(process.env.PRAGA ?? 0.35), countries: 25 });
-  const vs = filterForViewer(map, state, process.env.VIEWER ?? null);
-  content = renderPolitical(map, vs, { lang: (process.env.LANG_MAP as 'pt' | 'en') ?? 'pt', mode });
-  console.log(`test state: ${state.countries.length} countries, viewer ${vs.viewer ?? 'observer'}, ${vs.visible.length} visible regions`);
+  content = renderPolitical(rm, vs, { lang: (process.env.LANG_MAP as 'pt' | 'en') ?? 'pt', mode });
+  console.log(`test state: ${state.countries.length} countries, viewer ${vs.viewer ?? 'GM'}, ${vs.visible.length} visible regions`);
 }
-if (mode === 'resources') content = renderResources(map);
-if (mode === 'starts') content = renderStarts(map, 'pt');
+if (mode === 'resources') content = renderResources(rm, vs);
+if (mode === 'starts') content = renderStarts(rm, vs, 'pt');
 if (map.fairness) console.log('fairness', JSON.stringify(map.fairness));
 const svg = renderStandalone(map, { mode }, debug ? renderAdjacency(map) + renderSeam(map) : '', terrainImage, content, LABEL_CSS + ECONOMY_CSS);
 writeFileSync(join(out, `${seed}.json`), JSON.stringify(toExportJson(map)));

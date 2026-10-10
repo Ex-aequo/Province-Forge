@@ -4,8 +4,11 @@ import { DEFAULT_PARAMS } from '../../src/gen/types';
 import { makeTestState } from '../../src/game/testState';
 import { filterForViewer } from '../../src/game/state';
 import { renderPolitical } from '../../src/render/political';
+import { toClientMap } from '../../src/map/clientMap';
+import { RenderMap } from '../../src/map/renderMap';
 for (const seed of ['ex-aequo', 'beta', 'theta']) {
   const map = generateMap({ ...DEFAULT_PARAMS, seed });
+  const rm = new RenderMap(toClientMap(map));
   for (const progress of [0, 0.5, 1]) {
     const st = makeTestState(map, { seed, progress, praga: 0.5, countries: 25 });
     const ps = Object.values(st.provinces);
@@ -14,7 +17,7 @@ for (const seed of ['ex-aequo', 'beta', 'theta']) {
     const vs = filterForViewer(map, st, 'c1');
     const leaked = Object.keys(vs.provinces).filter((id) => !vs.visible.includes(Number(id))).length;
     const t0 = performance.now();
-    const svg = renderPolitical(map, filterForViewer(map, st, null), { lang: 'en', mode: 'political' });
-    console.log(`${seed} p=${progress}: owned ${owned}/400, occupied ${occ}, praga ${praga}, colours ${colors}/25, c1 sees ${vs.visible.length}, leaked ${leaked}, render ${Math.round(performance.now() - t0)} ms, ${(svg.length / 1e6).toFixed(1)} MB`);
+    const svg = renderPolitical(rm, filterForViewer(map, st, null, { gm: true }), { lang: 'en', mode: 'political' });
+    console.log(`${seed} p=${progress}: owned ${owned}/${Object.keys(st.provinces).length}, occupied ${occ}, praga ${praga}, colours ${colors}/25, c1 sees ${vs.visible.length}, leaked ${leaked}, render ${Math.round(performance.now() - t0)} ms, ${(svg.length / 1e6).toFixed(1)} MB`);
   }
 }

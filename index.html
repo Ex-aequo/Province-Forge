@@ -13,7 +13,7 @@
   <aside class="panel" aria-label="Controlos do gerador">
     <header class="brand">
       <h1>Province Forge</h1>
-      <p class="sub">Gerador de mapas · marco 4 · posições iniciais</p>
+      <p class="sub">Gerador de mapas · marco 5 · ferramenta do GM</p>
     </header>
 
     <section class="block seed">
@@ -77,15 +77,16 @@
       <h2 class="label">Exportar</h2>
       <div class="seed-row">
         <button id="export-json" class="btn" type="button">JSON do mapa estático</button>
+        <button id="export-client" class="btn" type="button">JSON do cliente</button>
         <button id="export-svg" class="btn" type="button">SVG</button>
         <button id="export-state" class="btn" type="button">Estado do turno</button>
       </div>
-      <p class="hint" id="export-msg">O JSON é o que o servidor do jogo guarda. A geometria fica congelada quando um jogo começa.</p>
+      <p class="hint" id="export-msg">O mapa estático fica no servidor (inclui segredos). O JSON do cliente é o que os jogadores descarregam. A geometria fica congelada quando um jogo começa.</p>
     </section>
   </aside>
 
   <main class="stage">
-    <svg id="map" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" role="img" aria-label="Mapa do mundo gerado"></svg>
+    <div id="map-host" class="map-host" aria-label="Mapa do mundo gerado"></div>
     <div class="hud" id="hud" hidden></div>
     <div class="selection" id="selection" hidden></div>
     <div class="busy" id="busy">A gerar o mundo…</div>

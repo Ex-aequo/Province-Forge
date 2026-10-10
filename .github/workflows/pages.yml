@@ -15,7 +15,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  server-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -e 'server/python[test]'
+      - run: pytest -q server/python
+
   build:
+    needs: server-tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,6 +39,8 @@ jobs:
       - run: npm run build
         env:
           BASE_PATH: /${{ github.event.repository.name }}/
+      # demo game client: bake a small public test map (tiles up to level 2) into dist/demo-map
+      - run: npm run demo
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

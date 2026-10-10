@@ -7,5 +7,10 @@ import { viteSingleFile } from 'vite-plugin-singlefile';
 export default defineConfig(({ mode }) => ({
   base: process.env.BASE_PATH ?? '/',
   plugins: mode === 'single' ? [viteSingleFile()] : [],
-  build: { outDir: mode === 'single' ? 'dist-single' : 'dist', target: 'es2022' },
+  build: {
+    outDir: mode === 'single' ? 'dist-single' : 'dist',
+    target: 'es2022',
+    // demo.html = demo game client (React + MapView + baked tiles), see tools/make-demo.ts
+    rollupOptions: mode === 'single' ? undefined : { input: { main: 'index.html', demo: 'demo.html' } },
+  },
 }));

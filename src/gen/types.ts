@@ -192,6 +192,10 @@ export interface Region {
   value?: number;
   /** Start slot this province belongs to (land only), if any. */
   startSlot?: number;
+  /** Each ring as a sequence of shared border chains: [chain index, reversed 0/1,
+   *  x shift in world widths]. Lets clients rebuild rings at any simplification level
+   *  without gaps between neighbours (topology, as in TopoJSON). */
+  ringArcs?: [number, number, number][][];
   /** Polygon rings (flat x,y arrays). May extend past [0,width] — render with wrap copies. */
   rings: number[][];
   coastal: boolean;

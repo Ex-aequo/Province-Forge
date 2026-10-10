@@ -109,11 +109,12 @@ export function buildBorders(mesh: Mesh, cellRegion: Int32Array, regions: Region
   let ringFailures = 0;
   for (const region of regions) {
     region.rings = [];
+    region.ringArcs = [];
     const list = perRegion.get(region.id) ?? [];
     const byKey = new Map<number, number[]>();
     for (const ci of list) {
       const c = borders[ci] as BorderChain & { _start: number; _end: number };
-      if (c.closed) { region.rings.push(c.pts.slice()); continue; }
+      if (c.closed) { region.rings.push(c.pts.slice()); region.ringArcs.push([[ci, 0, 0]]); continue; }
       (byKey.get(c._start) ?? byKey.set(c._start, []).get(c._start)!).push(ci);
       (byKey.get(c._end) ?? byKey.set(c._end, []).get(c._end)!).push(ci);
     }
@@ -123,6 +124,7 @@ export function buildBorders(mesh: Mesh, cellRegion: Int32Array, regions: Region
       if (c0.closed || done.has(ci)) continue;
       done.add(ci);
       const ring = c0.pts.slice();
+      const arcs: [number, number, number][] = [[ci, 0, 0]];
       const startKey = c0._start;
       let cur = c0._end;
       let guard = 0;
@@ -133,11 +135,14 @@ export function buildBorders(mesh: Mesh, cellRegion: Int32Array, regions: Region
         const c = borders[next] as BorderChain & { _start: number; _end: number };
         const fwd = c._start === cur;
         const src = fwd ? c.pts : reversePts(c.pts);
-        const shift = Math.round((ring[ring.length - 2] - src[0]) / W) * W;
+        const k = Math.round((ring[ring.length - 2] - src[0]) / W);
+        const shift = k * W;
         for (let t = 2; t < src.length; t += 2) ring.push(src[t] + shift, src[t + 1]);
+        arcs.push([next, fwd ? 0 : 1, k]);
         cur = fwd ? c._end : c._start;
       }
       region.rings.push(ring);
+      region.ringArcs.push(arcs);
     }
   }
   for (const b of borders) { delete (b as any)._start; delete (b as any)._end; }
