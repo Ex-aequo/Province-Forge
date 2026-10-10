@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="pt-PT">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Province Forge</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Spectral+SC:wght@500;600&display=swap">
+</head>
+<body>
+<div class="app">
+  <aside class="panel" aria-label="Controlos do gerador">
+    <header class="brand">
+      <h1>Province Forge</h1>
+      <p class="sub">Gerador de mapas · marco 4 · posições iniciais</p>
+    </header>
+
+    <section class="block seed">
+      <label for="seed" class="label">Semente</label>
+      <div class="seed-row">
+        <input id="seed" type="text" spellcheck="false" autocomplete="off">
+        <button id="reroll" class="btn" type="button" title="Nova semente aleatória">Nova semente</button>
+      </div>
+      <div class="seed-row">
+        <button id="generate" class="btn primary" type="button">Gerar</button>
+        <label class="check"><input id="auto" type="checkbox" checked> Regenerar ao alterar</label>
+      </div>
+    </section>
+
+    <section class="block">
+      <h2 class="label">Vista</h2>
+      <div class="seg" role="radiogroup" aria-label="Modo do mapa" id="modes">
+        <button type="button" role="radio" data-mode="political" aria-checked="true">Político</button>
+        <button type="button" role="radio" data-mode="terrain" aria-checked="false">Terreno</button>
+        <button type="button" role="radio" data-mode="praga" aria-checked="false">Praga</button>
+        <button type="button" role="radio" data-mode="resources" aria-checked="false">Recursos</button>
+        <button type="button" role="radio" data-mode="starts" aria-checked="false">Posições iniciais</button>
+        <button type="button" role="radio" data-mode="terrainType" aria-checked="false">Tipo de terreno</button>
+        <button type="button" role="radio" data-mode="landmass" aria-checked="false">Continentes</button>
+        <button type="button" role="radio" data-mode="elevation" aria-checked="false">Relevo</button>
+      </div>
+      <div class="checks">
+        <label class="check"><input id="ov-cells" type="checkbox"> Células</label>
+        <label class="check"><input id="ov-ids" type="checkbox"> IDs das regiões</label>
+        <label class="check"><input id="ov-adj" type="checkbox"> Adjacências</label>
+        <label class="check"><input id="ov-seam" type="checkbox"> Junção</label>
+      </div>
+      <div class="legend" id="adj-legend" hidden>
+        <span><i style="background:#c0392b"></i>terra–terra</span>
+        <span><i style="background:#f1c40f"></i>terra–mar</span>
+        <span><i style="background:#ecf0f1;outline:1px solid #9aa"></i>mar–mar</span>
+      </div>
+    </section>
+
+    <section class="block test-state">
+      <h2 class="label">Estado de teste</h2>
+      <p class="hint" id="state-meta"></p>
+      <div class="param"><label for="ts-progress">Progresso do jogo</label><output id="ts-progress-out"></output><input id="ts-progress" type="range" min="0" max="1" step="0.05"></div>
+      <div class="param"><label for="ts-praga">Praga</label><output id="ts-praga-out"></output><input id="ts-praga" type="range" min="0" max="1" step="0.05"></div>
+      <label for="view-as" class="label">Ver como</label>
+      <select id="view-as"></select>
+      <div class="seed-row">
+        <button id="ts-new" class="btn" type="button">Novo estado</button>
+        <div class="seg seg-2" role="radiogroup" aria-label="Idioma do mapa" id="lang">
+          <button type="button" role="radio" data-lang="pt" aria-checked="true">PT</button>
+          <button type="button" role="radio" data-lang="en" aria-checked="false">EN</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="stats" aria-live="polite"></section>
+
+    <div id="controls"></div>
+
+    <section class="block">
+      <h2 class="label">Exportar</h2>
+      <div class="seed-row">
+        <button id="export-json" class="btn" type="button">JSON do mapa estático</button>
+        <button id="export-svg" class="btn" type="button">SVG</button>
+        <button id="export-state" class="btn" type="button">Estado do turno</button>
+      </div>
+      <p class="hint" id="export-msg">O JSON é o que o servidor do jogo guarda. A geometria fica congelada quando um jogo começa.</p>
+    </section>
+  </aside>
+
+  <main class="stage">
+    <svg id="map" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" role="img" aria-label="Mapa do mundo gerado"></svg>
+    <div class="hud" id="hud" hidden></div>
+    <div class="selection" id="selection" hidden></div>
+    <div class="busy" id="busy">A gerar o mundo…</div>
+    <div class="zoom">
+      <button class="btn icon" id="zoom-in" type="button" aria-label="Ampliar">+</button>
+      <button class="btn icon" id="zoom-out" type="button" aria-label="Reduzir">−</button>
+      <button class="btn icon" id="zoom-fit" type="button" aria-label="Ver o mundo inteiro">⤢</button>
+    </div>
+  </main>
+</div>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

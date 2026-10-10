@@ -1,0 +1,28 @@
+{
+  "name": "vector-map-generator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Procedural province map generator (SVG) for asynchronous multiplayer strategy games",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:single": "vite build --mode single",
+    "gen": "tsx tools/generate-cli.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "d3-delaunay": "^6.0.4",
+    "simplex-noise": "^4.0.3"
+  },
+  "devDependencies": {
+    "@napi-rs/canvas": "^1.0.10",
+    "@resvg/resvg-js": "^2.6.2",
+    "@types/d3-delaunay": "^6.0.4",
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vite-plugin-singlefile": "^2.3.3"
+  }
+}

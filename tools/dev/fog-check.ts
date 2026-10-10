@@ -1,0 +1,17 @@
+import { generateMap } from '../../src/gen/generate';
+import { DEFAULT_PARAMS } from '../../src/gen/types';
+import { makeTestState } from '../../src/game/testState';
+import { filterForViewer } from '../../src/game/state';
+const map = generateMap({ ...DEFAULT_PARAMS, seed: 'ex-aequo' });
+const st = makeTestState(map, { seed: 'ex-aequo', progress: 0.3, praga: 0.35, countries: 25 });
+const vs = filterForViewer(map, st, 'c5');
+const kinds: Record<string, number> = {};
+for (const id of vs.visible) kinds[map.regions[id].kind] = (kinds[map.regions[id].kind] ?? 0) + 1;
+console.log(kinds, 'known', st.known['c5'].length, 'owned', Object.values(st.provinces).filter(p => p.owner === 'c5').length);
+const seaRings = map.regions.filter(r => r.kind === 'sea').map(r => r.rings.length);
+console.log('sea ring counts max', Math.max(...seaRings));
+const coastal = map.regions.find(r => r.kind === 'land' && r.coastal)!;
+console.log('coastal', coastal.id, coastal.neighbors.map(o => map.regions[o].kind));
+console.log('sea neighbor counts', map.regions.filter(r=>r.kind==='land').reduce((s,r)=>s+r.neighbors.filter(o=>map.regions[o].kind==='sea').length,0));
+const anyLand = vs.visible.filter(id=>map.regions[id].kind==='land');
+console.log('visible land coastal', anyLand.filter(id=>map.regions[id].coastal).length);
