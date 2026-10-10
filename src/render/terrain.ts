@@ -15,7 +15,23 @@ export const TILE = 512;
 export const BASE_PX = 2048;
 export const MAX_LEVEL = 4;
 
+/** "Fake 3D" look (decided with Pedro: top-down map, everything with height stands up).
+ *  Lengths are in WORLD units, so the effect scales with zoom like the terrain itself. */
+export interface TerrainStyle {
+  /** Height of the coastal cliff drawn below south-facing coasts (0 = flat). */
+  coastHeight: number;
+  /** Darkness of the shadow land casts on the water (0–1). */
+  coastShadow: number;
+  /** Hillshade contrast (1.4 = the M2–M5 look). */
+  reliefContrast: number;
+  /** Valley darkening / ridge lightening from local height differences (0 = off). */
+  cavity: number;
+}
+export const DEFAULT_TERRAIN_STYLE: TerrainStyle = { coastHeight: 3.5, coastShadow: 0.55, reliefContrast: 1.9, cavity: 0.55 };
+export const FLAT_TERRAIN_STYLE: TerrainStyle = { coastHeight: 0, coastShadow: 0, reliefContrast: 1.4, cavity: 0 };
+
 export interface TerrainData {
+  style: TerrainStyle;
   W: number;
   H: number;
   seed: string;
@@ -25,6 +41,8 @@ export interface TerrainData {
   landR: Float32Array; landG: Float32Array; landB: Float32Array;
   hLand: Float32Array;
   depth: Float32Array;
+  /** Per cell: neighbourhood height minus own height (+ valley, − ridge). */
+  cav: Float32Array;
   /** Average distance between cell sites, in map units. */
   spacing: number;
   hillsAt: number;
@@ -40,7 +58,7 @@ const BIOME_RGB: Record<Biome, [number, number, number]> = {
 };
 
 /** Extract everything the raster needs from a generated map (all transferable arrays). */
-export function buildTerrainData(map: GeneratedMap): TerrainData {
+export function buildTerrainData(map: GeneratedMap, style: TerrainStyle = DEFAULT_TERRAIN_STYLE): TerrainData {
   const n = map.cellX.length;
   const landR = new Float32Array(n), landG = new Float32Array(n), landB = new Float32Array(n);
   const hLand = new Float32Array(n), depth = new Float32Array(n);
@@ -65,6 +83,17 @@ export function buildTerrainData(map: GeneratedMap): TerrainData {
     if (k) { landR[i] = r / k; landG[i] = g / k; landB[i] = b / k; }
     else { landR[i] = 200 / 255; landG[i] = 186 / 255; landB[i] = 140 / 255; }
   }
+  // cavity: mean land height over the 2-ring neighbourhood minus own height
+  const cav = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    if (!isLand(i)) continue;
+    const ring = new Set<number>();
+    for (const j of nb[i]) { ring.add(j); for (const k of nb[j]) ring.add(k); }
+    ring.delete(i);
+    let s = 0, c = 0;
+    for (const j of ring) { s += isLand(j) ? hLand[j] : 0; c++; }
+    if (c) cav[i] = s / c - hLand[i];
+  }
   const landE: number[] = [];
   for (let i = 0; i < n; i++) if (isLand(i)) landE.push(hLand[i]);
   landE.sort((a, b) => a - b);
@@ -80,9 +109,9 @@ export function buildTerrainData(map: GeneratedMap): TerrainData {
     return { pts: Float64Array.from(pts), offs: Int32Array.from(offs) };
   };
   return {
-    W: map.width, H: map.height, seed: map.params.seed,
+    style, W: map.width, H: map.height, seed: map.params.seed,
     triXY: map.triXY, triCell: map.triCell,
-    landR, landG, landB, hLand, depth,
+    landR, landG, landB, hLand, depth, cav,
     spacing: Math.sqrt((map.width * map.height) / n),
     hillsAt: q(0.79), mountainAt: q(0.92),
     rings: { land: pack('land'), lake: pack('lake'), ice: pack('ice') },
@@ -182,13 +211,15 @@ export class TerrainRenderer {
     const { upx } = TerrainRenderer.tilesAt(level, d);
     // the buffer has a border P: one pixel for hillshade plus the blur radius
     const blurR = Math.max(1, Math.round((d.spacing * 0.45) / upx));
-    const P = blurR * 2 + 2;
+    const st = d.style;
+    const coastPx = (st.coastHeight * 2.4) / upx; // cliff + shadow reach, in pixels
+    const P = Math.max(blurR * 2 + 2, Math.ceil(coastPx) + 4);
     const S = TILE, B = S + 2 * P;
     const x0 = tx * S * upx - P * upx, y0 = ty * S * upx - P * upx; // world coords of buffer pixel (0,0) corner
 
     // ---- 1. barycentric rasterisation of triangles: colour, land height, depth
     const R = new Float32Array(B * B), G = new Float32Array(B * B), Bl = new Float32Array(B * B);
-    const HL = new Float32Array(B * B), DP = new Float32Array(B * B);
+    const HL = new Float32Array(B * B), DP = new Float32Array(B * B), CV = new Float32Array(B * B);
     const set = new Uint8Array(B * B);
     const wx0 = x0, wx1 = x0 + B * upx, wy0 = y0, wy1 = y0 + B * upx;
     const seen = new Set<number>();
@@ -200,7 +231,7 @@ export class TerrainRenderer {
         for (const t of list) {
           if (seen.has(t)) continue;
           seen.add(t);
-          this.rasterTri(t, x0, y0, upx, B, R, G, Bl, HL, DP, set);
+          this.rasterTri(t, x0, y0, upx, B, R, G, Bl, HL, DP, CV, set);
         }
       }
     }
@@ -209,12 +240,12 @@ export class TerrainRenderer {
       let last = -1;
       for (let y = 0; y < B; y++) if (set[y * B + x]) { last = y; break; }
       if (last < 0) continue;
-      for (let y = 0; y < last; y++) this.copyPx(y * B + x, last * B + x, R, G, Bl, HL, DP);
-      for (let y = last; y < B; y++) { if (set[y * B + x]) last = y; else this.copyPx(y * B + x, last * B + x, R, G, Bl, HL, DP); }
+      for (let y = 0; y < last; y++) this.copyPx(y * B + x, last * B + x, R, G, Bl, HL, DP, CV);
+      for (let y = last; y < B; y++) { if (set[y * B + x]) last = y; else this.copyPx(y * B + x, last * B + x, R, G, Bl, HL, DP, CV); }
     }
 
     // smooth away the linear-per-triangle facets (they show up badly in hillshade)
-    for (const arr of [HL, R, G, Bl, DP]) { boxBlur(arr, B, blurR); boxBlur(arr, B, blurR); }
+    for (const arr of [HL, R, G, Bl, DP, CV]) { boxBlur(arr, B, blurR); boxBlur(arr, B, blurR); }
 
     // ---- 2. coverage masks from the vector polygons (antialiased, 3 copies for the wrap)
     const ctx = this.makeCtx(B, B);
@@ -261,6 +292,33 @@ export class TerrainRenderer {
       }
     }
 
+    // ---- 4. "fake 3D" coast fields: raised land (and ice) as a plateau
+    // E = raised coverage (land + ice), K = lake coverage
+    const E = new Float32Array(B * B), K = new Float32Array(B * B);
+    for (let i = 0; i < B * B; i++) { E[i] = Math.min(1, (mask[i * 4] + mask[i * 4 + 2]) / 255); K[i] = mask[i * 4 + 1] / 255; }
+    const chPx = st.coastHeight / upx;
+    const nK = Math.ceil(chPx);
+    // distance (px) up to the nearest raised pixel: lets open sea skip the cliff search
+    const upDist = new Uint16Array(B * B);
+    for (let x = 0; x < B; x++) {
+      let last = -10000;
+      for (let y = 0; y < B; y++) { const i = y * B + x; if (E[i] > 0.004) last = y; upDist[i] = Math.min(65535, y - last); }
+    }
+    // cast shadow: coverage shifted along the light, then softened
+    const shLen = (st.coastHeight * 1.6) / upx;
+    const sdx = Math.round(0.66 * shLen), sdy = Math.round(0.75 * shLen);
+    const SH = new Float32Array(B * B), SK = new Float32Array(B * B);
+    if (st.coastShadow > 0 && chPx > 0.15) {
+      for (let y = 0; y < B; y++) for (let x = 0; x < B; x++) {
+        const xs = Math.max(0, Math.min(B - 1, x - sdx)), ys = Math.max(0, Math.min(B - 1, y - sdy));
+        const j = ys * B + xs;
+        SH[y * B + x] = E[j];
+        SK[y * B + x] = 1 - K[j];
+      }
+      const rb = Math.max(1, Math.round((st.coastHeight * 0.7) / upx));
+      boxBlur(SH, B, rb); boxBlur(SH, B, rb); boxBlur(SK, B, rb); boxBlur(SK, B, rb);
+    }
+
     const out = new Uint8ClampedArray(S * S * 4);
     const relief = 48; // world units of height per 1.0 of elevation (exaggerated for shading)
     const lx = -0.55, ly = -0.62, lz = 0.56;
@@ -281,7 +339,15 @@ export class TerrainRenderer {
           const sy = (H2[i + B] - H2[i - B]) * relief / (2 * upx);
           const nl = Math.hypot(sx, sy, 1);
           const shade = (-sx * lx - sy * ly + lz) / (nl * ln);
-          const light = Math.max(0.5, Math.min(1.4, 1 + (shade - flat) * 1.4));
+          let light = Math.max(0.45, Math.min(1.5, 1 + (shade - flat) * st.reliefContrast));
+          // valleys a little darker, ridges a little brighter
+          if (st.cavity > 0) light *= 1 - st.cavity * Math.max(-0.25, Math.min(0.45, CV[i] * 7));
+          // bevel: the coastal rim facing the light catches it, the far rim darkens
+          if (chPx > 0.15) {
+            const o1 = Math.max(1, Math.round(0.35 * chPx));
+            const up = E[i - o1 * B - o1], dn = E[i + o1 * B + o1];
+            light *= 1 + 0.12 * (1 - up) - 0.1 * (1 - dn);
+          }
           const h = H2[i];
           const rock = smooth(d.mountainAt * 0.9, d.mountainAt * 1.08, HL[i]) * 0.7;
           let cr = R[i], cg = G[i], cb = Bl[i];
@@ -292,15 +358,48 @@ export class TerrainRenderer {
           const tex = 1 + grain * 0.07;
           r += aL * cr * light * tex; g += aL * cg * light * tex; b += aL * cb * light * tex;
         }
+        // cliff face: water pixel just south of raised ground shows the ground's side
+        let face = 0, faceT = 0, faceIce = 0;
+        if (chPx > 0.15 && E[i] < 0.999 && upDist[i - B] <= nK) {
+          for (let k = 1; k <= nK; k++) {
+            const w = k <= chPx ? 1 : chPx - (k - 1);
+            const j = i - k * B;
+            const v = E[j] * w;
+            if (v > face) { face = v; faceT = k / chPx; faceIce = mask[j * 4 + 2] / 255; }
+          }
+          face *= 1 - E[i];
+        }
+        // lake walls: the far (north) shore of a lake shows a short earthen bank
+        let wall = 0, wallT = 0;
+        if (chPx > 0.15 && aK > 0) {
+          const nW = Math.max(1, Math.round(chPx * 0.6));
+          for (let k = 1; k <= nW; k++) { const v = 1 - K[i - k * B]; if (v > wall) { wall = v; wallT = k / nW; } }
+          wall *= aK;
+        }
+        const shade2 = 1 - st.coastShadow * SH[i];
         if (aS > 0) {
           const dd = smooth(0, 0.7, DP[i]);
           const shallow = [0.42, 0.62, 0.7], deep = [0.15, 0.29, 0.42];
           const wv = 1 + grain * 0.035;
-          r += aS * (shallow[0] + (deep[0] - shallow[0]) * dd) * wv;
-          g += aS * (shallow[1] + (deep[1] - shallow[1]) * dd) * wv;
-          b += aS * (shallow[2] + (deep[2] - shallow[2]) * dd) * wv;
+          r += aS * (shallow[0] + (deep[0] - shallow[0]) * dd) * wv * shade2;
+          g += aS * (shallow[1] + (deep[1] - shallow[1]) * dd) * wv * shade2;
+          b += aS * (shallow[2] + (deep[2] - shallow[2]) * dd) * wv * shade2;
         }
-        if (aK > 0) { const wv = 1 + grain * 0.03; r += aK * 0.36 * wv; g += aK * 0.56 * wv; b += aK * 0.67 * wv; }
+        if (aK > 0) {
+          const wv = 1 + grain * 0.03, sk = 1 - st.coastShadow * 0.8 * SK[i] * aK;
+          r += aK * 0.36 * wv * sk; g += aK * 0.56 * wv * sk; b += aK * 0.67 * wv * sk;
+        }
+        if (face > 0.003 || wall > 0.003) {
+          // earth / rock face, lighter at the top edge; ice cliffs pale blue
+          const f = Math.max(face, wall), t = face >= wall ? faceT : wallT;
+          const strata = 1 + 0.06 * this.fbm(this.noiseB, wxp * 0.2, wyp * 3, 1 / 6, 1);
+          const lum = (0.92 - 0.38 * t) * strata;
+          let fr = 0.3 * R[i] + 0.7 * 0.5, fg = 0.3 * G[i] + 0.7 * 0.42, fb = 0.3 * Bl[i] + 0.7 * 0.33;
+          fr += (0.74 - fr) * faceIce; fg += (0.83 - fg) * faceIce; fb += (0.9 - fb) * faceIce;
+          r = r * (1 - f) + fr * lum * f; g = g * (1 - f) + fg * lum * f; b = b * (1 - f) + fb * lum * f;
+          // dark line where the face meets the water
+          if (t > 0.85) { const k = (t - 0.85) / 0.15 * f * 0.35; r *= 1 - k; g *= 1 - k; b *= 1 - k; }
+        }
         if (aI > 0) {
           const ice = 0.93 + grain * 0.05;
           r += aI * 0.88 * ice; g += aI * 0.92 * ice; b += aI * 0.95 * ice;
@@ -312,12 +411,12 @@ export class TerrainRenderer {
     return out;
   }
 
-  private copyPx(to: number, from: number, R: Float32Array, G: Float32Array, B: Float32Array, HL: Float32Array, DP: Float32Array) {
-    R[to] = R[from]; G[to] = G[from]; B[to] = B[from]; HL[to] = HL[from]; DP[to] = DP[from];
+  private copyPx(to: number, from: number, R: Float32Array, G: Float32Array, B: Float32Array, HL: Float32Array, DP: Float32Array, CV: Float32Array) {
+    R[to] = R[from]; G[to] = G[from]; B[to] = B[from]; HL[to] = HL[from]; DP[to] = DP[from]; CV[to] = CV[from];
   }
 
   private rasterTri(t: number, x0: number, y0: number, upx: number, Bsz: number,
-    R: Float32Array, G: Float32Array, B: Float32Array, HL: Float32Array, DP: Float32Array, set: Uint8Array) {
+    R: Float32Array, G: Float32Array, B: Float32Array, HL: Float32Array, DP: Float32Array, CV: Float32Array, set: Uint8Array) {
     const d = this.d, T = d.triXY, C = d.triCell;
     // pixel-space vertices (pixel centres at integer + 0.5)
     const ax = (T[6 * t] - x0) / upx, ay = (T[6 * t + 1] - y0) / upx;
@@ -346,6 +445,7 @@ export class TerrainRenderer {
         B[i] = l1 * d.landB[ca] + l2 * d.landB[cb] + l3 * d.landB[cc];
         HL[i] = l1 * d.hLand[ca] + l2 * d.hLand[cb] + l3 * d.hLand[cc];
         DP[i] = l1 * d.depth[ca] + l2 * d.depth[cb] + l3 * d.depth[cc];
+        CV[i] = l1 * d.cav[ca] + l2 * d.cav[cb] + l3 * d.cav[cc];
         set[i] = 1;
       }
     }
