@@ -2,7 +2,7 @@
 
 Procedural province maps for Ex-Aequo asynchronous strategy games.
 
-**Test build:** https://ex-aequo.github.io/province-forge/ — rebuilt automatically on every push to `main` (`.github/workflows/pages.yml`). Public URL: test data only, never real game data.
+**Test build:** https://ex-aequo.github.io/Province-Forge/ — rebuilt automatically on every push to `main` (`.github/workflows/pages.yml`). Public URL: test data only, never real game data.
 M1: geometry (cells, landmass, provinces, sea zones, adjacency, borders).
 M2: hydrology (rivers, lakes, polar ice), climate, biomes, gameplay terrain, painted terrain raster tiles.
 M3: bilingual names (PT/EN), turn-state contract, EU4-style political renderer (colours over relief, border hierarchy, occupation, Praga, terra incognita, curved country names).
