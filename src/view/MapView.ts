@@ -6,6 +6,7 @@
 //
 // It never sees more than it is given: the client map has no secrets, and the
 // viewer state must already be filtered by the server.
+import '../assets/fonts/fonts.css';
 import type { ViewerState } from '../game/state';
 import type { ClientMap } from '../map/clientMap';
 import { RenderMap, type Lod } from '../map/renderMap';

@@ -1,0 +1,4 @@
+/* Map lettering: IM Fell English (Igino Marini), SIL Open Font License 1.1 — see OFL.txt.
+   Loaded by MapView; the .ttf copies are for server-side rendering (resvg). */
+@font-face { font-family: 'IM Fell English'; src: url('./IMFellEnglish.woff2') format('woff2'); font-display: swap; }
+@font-face { font-family: 'IM Fell English SC'; src: url('./IMFellEnglishSC.woff2') format('woff2'); font-display: swap; }

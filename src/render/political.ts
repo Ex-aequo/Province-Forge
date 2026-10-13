@@ -11,18 +11,18 @@ export type Lang = 'pt' | 'en';
 /** Label styles. Font sizes are in map units, so labels scale with zoom; the root <svg>
  *  carries data-lod (0 far · 1 mid · 2 close) to decide which kinds are shown. */
 export const LABEL_CSS = `
-.lbl-country{font-family:'Spectral SC',Georgia,serif;font-weight:600;fill:rgba(28,20,12,.86);stroke:rgba(250,244,230,.5);paint-order:stroke;stroke-linejoin:round}
-.lbl-prov{font:500 8.5px 'IBM Plex Sans',system-ui,sans-serif;fill:rgba(25,18,12,.88);text-anchor:middle;dominant-baseline:central;paint-order:stroke;stroke:rgba(255,250,240,.6);stroke-width:1.6px;stroke-linejoin:round}
-.lbl-sea{font:italic 500 9px 'Spectral SC',Georgia,serif;fill:rgba(228,238,247,.92);text-anchor:middle;dominant-baseline:central;letter-spacing:1px}
+.lbl-country{font-family:'IM Fell English SC',Georgia,serif;font-weight:400;fill:rgba(28,20,12,.86);stroke:rgba(250,244,230,.5);paint-order:stroke;stroke-linejoin:round}
+.lbl-prov{font:400 8.5px 'IM Fell English',Georgia,serif;fill:rgba(25,18,12,.88);text-anchor:middle;dominant-baseline:central;paint-order:stroke;stroke:rgba(255,250,240,.6);stroke-width:1.6px;stroke-linejoin:round}
+.lbl-sea{font:400 9px 'IM Fell English',Georgia,serif;fill:rgba(228,238,247,.92);text-anchor:middle;dominant-baseline:central;letter-spacing:1px}
 .lbl-lake{font-size:7px;fill:rgba(20,48,70,.9)}
-.lbl-ocean{font:italic 600 20px 'Spectral SC',Georgia,serif;fill:rgba(228,238,247,.7);text-anchor:middle;dominant-baseline:central;letter-spacing:3px}
-.lbl-reserved{font:600 8px 'IBM Plex Sans',system-ui,sans-serif;letter-spacing:2px;fill:#7a5512;text-anchor:middle;dominant-baseline:central;paint-order:stroke;stroke:rgba(255,248,226,.8);stroke-width:2px}
-.lbl-river{font:italic 500 5.5px 'Spectral SC',Georgia,serif;fill:#21496a;letter-spacing:.6px}
+.lbl-ocean{font:400 20px 'IM Fell English',Georgia,serif;fill:rgba(228,238,247,.7);text-anchor:middle;dominant-baseline:central;letter-spacing:3px}
+.lbl-reserved{font:400 8px 'IM Fell English SC',Georgia,serif;letter-spacing:2px;fill:#7a5512;text-anchor:middle;dominant-baseline:central;paint-order:stroke;stroke:rgba(255,248,226,.8);stroke-width:2px}
+.lbl-river{font:400 5.5px 'IM Fell English',Georgia,serif;fill:#21496a;letter-spacing:.6px}
 svg[data-lod="0"] .lbl-prov,svg[data-lod="0"] .lbl-sea,svg[data-lod="0"] .lbl-ocean,svg[data-lod="0"] .lbl-river{display:none}
 svg[data-lod="0"] .lbl-small,svg[data-lod="0"] .lbl-close,svg[data-lod="1"] .lbl-close{display:none}
 svg[data-lod="1"] .lbl-river{display:none}
 svg[data-lod="1"] .lbl-countries{opacity:.5}
-svg[data-lod="2"] .lbl-countries{opacity:.2}
+svg[data-lod="2"] .lbl-countries{opacity:.55}
 svg[data-lod="2"] .lbl-ocean{opacity:.45}
 `;
 
@@ -34,6 +34,8 @@ export interface PoliticalOptions {
 }
 
 const GREY = '#8c8f8b';
+/** Border colouring bands: [stroke width in screen px (half falls inside), opacity]. */
+const BANDS: [number, number][] = [[36, 0.1], [22, 0.12], [12, 0.16], [5, 0.25]];
 const PRAGA_HEAT = ['rgba(236, 229, 211, 0.55)', '#c99a8e', '#94455a', '#3f1430'];
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
 
@@ -75,16 +77,40 @@ export function renderPolitical(map: RenderMap, vs: ViewerState, opt: PoliticalO
   // ---- fills
   const fills: string[] = ['<g class="pol-fills">'];
   if (opt.mode === 'political') {
-    // one path per country (fewer DOM nodes than one per province)
+    // hand-coloured map look (decided with Pedro): each country's colour is strong along
+    // its border and fades to a light wash inside, so the painted terrain shows through.
+    // One shared path per country, a clip to its shape, and a few stacked strokes of
+    // decreasing opacity (screen-constant widths) — no blur filters, cheap on iPad.
     const byOwner = new Map<string, number[]>();
     for (const r of regions) {
       if (r.kind !== 'land' || !visible.has(r.id)) continue;
       const o = prov(r.id)?.owner;
       if (o) (byOwner.get(o) ?? byOwner.set(o, []).get(o)!).push(r.id);
     }
-    for (const [o, ids] of byOwner) {
-      fills.push(`<path fill="${colors.get(o) ?? '#777'}" fill-opacity="0.74" fill-rule="evenodd" d="${ids.map((i) => ringPath(map.rings(i))).join('')}"/>`);
+    // each country's OUTLINE (borders with another owner, coasts, unowned land) — not
+    // the internal province borders — carries the colour bands
+    const visOwner = (id: number) => (id >= 0 && visible.has(id) && map.region(id)?.kind === 'land' ? prov(id)?.owner ?? null : null);
+    const outline = new Map<string, RenderBorder[]>();
+    for (const b of map.borders) {
+      const oa = visOwner(b.a), ob = visOwner(b.b);
+      if (oa === ob) continue;
+      if (oa) (outline.get(oa) ?? outline.set(oa, []).get(oa)!).push(b);
+      if (ob) (outline.get(ob) ?? outline.set(ob, []).get(ob)!).push(b);
     }
+    const shapes: string[] = [];
+    let ci = 0;
+    for (const [o, ids] of byOwner) {
+      const col = colors.get(o) ?? '#777';
+      const pid = `cf-${ci}-${o}`, eid = `ce-${ci}-${o}`, cid = `cc-${ci}-${o}`;
+      ci++;
+      shapes.push(`<path id="${pid}" fill-rule="evenodd" clip-rule="evenodd" d="${ids.map((i) => ringPath(map.rings(i))).join('')}"/>`);
+      shapes.push(`<path id="${eid}" ${nss} d="${chainPath(outline.get(o) ?? [])}"/>`);
+      fills.push(`<clipPath id="${cid}"><use href="#${pid}"/></clipPath>`);
+      fills.push(`<use href="#${pid}" fill="${col}" fill-opacity="0.2"/>`);
+      fills.push(`<g clip-path="url(#${cid})" fill="none" stroke="${col}" stroke-linejoin="round" stroke-linecap="round">` +
+        BANDS.map(([w, a]) => `<use href="#${eid}" stroke-width="${w}" stroke-opacity="${a}"/>`).join('') + '</g>');
+    }
+    if (shapes.length) fills.splice(1, 0, `<defs>${shapes.join('')}</defs>`);
     // occupation stripes
     const occ = new Map<string, number[]>();
     for (const r of regions) {

@@ -68,6 +68,7 @@ if (map.fairness) console.log('fairness', JSON.stringify(map.fairness));
 const svg = renderStandalone(map, { mode }, debug ? renderAdjacency(map) + renderSeam(map) : '', terrainImage, content, LABEL_CSS + ECONOMY_CSS);
 writeFileSync(join(out, `${seed}.json`), JSON.stringify(toExportJson(map)));
 writeFileSync(join(out, `${seed}-${mode}.svg`), svg);
-const png = new Resvg(svg, { fitTo: { mode: 'width', value: pngWidth } }).render().asPng();
+const fontFiles = ['IMFellEnglish.ttf', 'IMFellEnglishSC.ttf'].map((f) => join('src/assets/fonts', f));
+const png = new Resvg(svg, { fitTo: { mode: 'width', value: pngWidth }, font: { fontFiles, loadSystemFonts: true, defaultFontFamily: 'IM Fell English' } }).render().asPng();
 writeFileSync(join(out, `${seed}-${mode}.png`), png);
 console.log(`wrote ${out}/${seed}-${mode}.{svg,png} and ${seed}.json`);
