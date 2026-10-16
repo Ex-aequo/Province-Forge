@@ -62,6 +62,11 @@ export interface GenParams {
   valueTolerance: number;
   /** Fraction of land provinces that get a rare resource (gold, spices). */
   rareShare: number;
+  // ---- scale (Praga: 25–150 kingdoms)
+  /** Share of the land provinces that start inside a start position (the rest is free land). */
+  startShare: number;
+  /** Derive landProvinces, cellCount and world size from slots × startProvinces / startShare. */
+  autoScale: boolean;
 }
 
 export const DEFAULT_PARAMS: GenParams = {
@@ -95,7 +100,32 @@ export const DEFAULT_PARAMS: GenParams = {
   startProvinces: 8,
   valueTolerance: 0.05,
   rareShare: 0.07,
+  startShare: 0.3,
+  autoScale: false,
 };
+
+/** Reference density: the default world (4000 × 2000, 36 000 cells, 650 provinces). */
+const REF = { provinces: 650, cells: 36000, width: 4000, height: 2000 };
+
+/**
+ * With `autoScale`, the world grows with the number of start positions so that every
+ * province keeps the same size on screen and in cells:
+ *   landProvinces = (playerSlots + reserveSlots) × startProvinces / startShare
+ * Measured (tools/dev/scale-check.ts, Node, one core): 25 slots ≈ 5 s, 50 ≈ 7 s, 100 ≈ 12 s,
+ * 150 ≈ 19 s; client map 0.4 / 0.55 / 0.9 / 1.3 MB gzipped.
+ */
+export function resolveParams(p: GenParams): GenParams {
+  const q: GenParams = { ...p, continentSizes: [...p.continentSizes] as [number, number, number] };
+  if (!p.autoScale) return q;
+  const slots = p.playerSlots + p.reserveSlots;
+  const lp = Math.max(200, Math.round((slots * p.startProvinces) / Math.max(0.05, p.startShare)));
+  const k = lp / REF.provinces;
+  q.landProvinces = lp;
+  q.cellCount = Math.round((REF.cells * k) / 500) * 500;
+  q.width = Math.round((REF.width * Math.sqrt(k)) / 10) * 10;
+  q.height = Math.round((REF.height * Math.sqrt(k)) / 10) * 10;
+  return q;
+}
 
 /** What a cell is. Lakes and ice are impassable and belong to no gameplay graph. */
 export const CT = { Land: 0, Sea: 1, Lake: 2, Ice: 3 } as const;

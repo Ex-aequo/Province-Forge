@@ -4,7 +4,9 @@ import type { GenParams } from '../gen/types';
 type NumKey = { [K in keyof GenParams]: GenParams[K] extends number ? K : never }[keyof GenParams];
 
 interface SliderDef {
-  key: NumKey | `continentSizes.${0 | 1 | 2}`;
+  key: NumKey | `continentSizes.${0 | 1 | 2}` | 'autoScale';
+  /** 'check' = a checkbox for a boolean parameter (min/max/step ignored). */
+  kind?: 'check';
   label: string;
   min: number;
   max: number;
@@ -55,7 +57,9 @@ export const GROUPS: { title: string; open?: boolean; sliders: SliderDef[] }[] =
   },
   {
     title: 'Posições iniciais', open: true, sliders: [
-      { key: 'playerSlots', label: 'Jogadores', min: 6, max: 40, step: 1 },
+      { key: 'autoScale', kind: 'check', label: 'Tamanho do mundo automático', min: 0, max: 1, step: 1, help: 'O número de províncias, de células e o tamanho do mundo passam a vir de jogadores × províncias por jogador ÷ território inicial. Ignora os controlos de células e de províncias terrestres.' },
+      { key: 'playerSlots', label: 'Jogadores / reinos', min: 6, max: 150, step: 1, help: 'Acima de 50, a geração demora 10–20 s e o equilíbrio entre posições fica mais solto.' },
+      { key: 'startShare', label: 'Território inicial', min: 0.1, max: 0.6, step: 0.05, fmt: pct, help: 'Parte da terra que começa dentro de uma posição inicial (só com tamanho automático). O resto são terras livres.' },
       { key: 'reserveSlots', label: 'Posições de reserva', min: 0, max: 10, step: 1, help: 'Territórios intocáveis para quem entra a meio do jogo. O servidor tem de os proteger.' },
       { key: 'startProvinces', label: 'Províncias por jogador', min: 3, max: 12, step: 1 },
       { key: 'valueTolerance', label: 'Tolerância de valor', min: 0.02, max: 0.15, step: 0.01, fmt: (v) => `${Math.round(v * 100)}%`, help: 'Diferença máxima entre a posição mais rica e a mais pobre.' },
@@ -78,11 +82,13 @@ export const GROUPS: { title: string; open?: boolean; sliders: SliderDef[] }[] =
 ];
 
 function getVal(p: GenParams, key: SliderDef['key']): number {
+  if (key === 'autoScale') return p.autoScale ? 1 : 0;
   if (key.startsWith('continentSizes.')) return p.continentSizes[Number(key.split('.')[1])];
   return p[key as NumKey];
 }
 function setVal(p: GenParams, key: SliderDef['key'], v: number) {
-  if (key.startsWith('continentSizes.')) p.continentSizes[Number(key.split('.')[1])] = v;
+  if (key === 'autoScale') p.autoScale = v === 1;
+  else if (key.startsWith('continentSizes.')) p.continentSizes[Number(key.split('.')[1])] = v;
   else (p as unknown as Record<string, number>)[key] = v;
 }
 
@@ -100,6 +106,18 @@ export function buildControls(root: HTMLElement, params: GenParams, onCommit: ()
       const id = `p-${s.key.replace('.', '-')}`;
       const row = document.createElement('div');
       row.className = 'param';
+      if (s.kind === 'check') {
+        row.className = 'param param-check';
+        row.innerHTML = `<label><input id="${id}" type="checkbox"> ${s.label}</label>` +
+          (s.help ? `<span class="help">${s.help}</span>` : '');
+        const cb = row.querySelector('input')!;
+        const refresh = () => { cb.checked = getVal(params, s.key) === 1; };
+        cb.addEventListener('change', () => { setVal(params, s.key, cb.checked ? 1 : 0); onCommit(); });
+        refresh();
+        refreshers.push(refresh);
+        box.appendChild(row);
+        continue;
+      }
       row.innerHTML = `<label for="${id}">${s.label}</label><output for="${id}"></output>` +
         `<input id="${id}" type="range" min="${s.min}" max="${s.max}" step="${s.step}">` +
         (s.help ? `<span class="help">${s.help}</span>` : '');

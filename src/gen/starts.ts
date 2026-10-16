@@ -139,7 +139,7 @@ function tryOnce(
     // province, so zone sizes end up within a province or two of each other
     zone = balancedZones(caps, nbIn, pool.length);
     for (const [id, z] of zone) zoneOf.set(id, starts.length + z);
-    if (process.env.DEBUG_ZONES) { const sz = caps.map(() => 0); for (const z of zone.values()) sz[z]++; console.log('zones', sz.join(','), 'w', weight.map((x) => x.toFixed(2)).join(',')); }
+    if (typeof process !== "undefined" && process.env?.DEBUG_ZONES) { const sz = caps.map(() => 0); for (const z of zone.values()) sz[z]++; console.log('zones', sz.join(','), 'w', weight.map((x) => x.toFixed(2)).join(',')); }
     for (const cap of caps) {
       const idx = starts.length;
       starts.push({ slot: idx, reserved: false, landmass: cont.id, capital: cap, provinces: [cap], value: 0, freeNearby: 0, rareDistance: 0 });

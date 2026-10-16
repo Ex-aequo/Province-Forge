@@ -7,6 +7,7 @@ M1: geometry (cells, landmass, provinces, sea zones, adjacency, borders).
 M2: hydrology (rivers, lakes, polar ice), climate, biomes, gameplay terrain, painted terrain raster tiles.
 M3: bilingual names (PT/EN), turn-state contract, EU4-style political renderer (colours over relief, border hierarchy, occupation, Praga, terra incognita, curved country names).
 M4: 650 provinces, resources and province value, fair start positions (25 players + 5 reserved), Praga seeds, fairness score.
+M6 (Praga scale): `autoScale` — the world grows with the start positions (`landProvinces = slots × startProvinces / startShare`, cells and world size follow), 6–150 player slots, `startShare` (land that starts inside a start position). Measured with `tools/dev/scale-check.ts`: 25 slots ≈ 5 s, 50 ≈ 7 s, 100 ≈ 12 s, 150 ≈ 19 s (Node, one core); client map 0.4 / 0.55 / 0.9 / 1.3 MB gzipped; start-value spread stays under 5 % up to 50 slots and reaches 6–11 % at 150 (flagged as a validation issue, not a failure).
 M5: backend integration — production CLI with tile baking, slim client map (no secrets, 2 LODs), `MapView` + React wrapper, Python package (`exaequo_map`) with the server-side fog-of-war filter verified against shared TS test vectors, FastAPI example, PostgreSQL schema, nginx config, demo client.
 
 ## Run

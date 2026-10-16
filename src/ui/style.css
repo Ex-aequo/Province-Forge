@@ -94,6 +94,7 @@ details > summary::-webkit-details-marker { display: none; }
 .param label { font-size: 13px; }
 .param output { font: 500 12px var(--font-mono); color: var(--accent); font-variant-numeric: tabular-nums; }
 .param input[type="range"] { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); margin: 2px 0 0; }
+.param-check label { grid-column: 1 / -1; display: flex; gap: 6px; align-items: center; }
 .param .help { grid-column: 1 / -1; font-size: 11.5px; color: var(--muted); }
 
 /* stats */

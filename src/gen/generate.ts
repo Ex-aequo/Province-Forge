@@ -11,11 +11,12 @@ import type { Mesh } from './mesh';
 import { generateMesh } from './mesh';
 import { buildRegions } from './regions';
 import { subRng } from './rng';
-import { CT, RESOURCES, TERRAINS, type GeneratedMap, type GenParams, type MapStats, type Region, type Terrain, type ValidationIssue } from './types';
+import { CT, RESOURCES, resolveParams, TERRAINS, type GeneratedMap, type GenParams, type MapStats, type Region, type Terrain, type ValidationIssue } from './types';
 
 export const GENERATOR_VERSION = '0.4.0';
 
-export function generateMap(p: GenParams): GeneratedMap {
+export function generateMap(input: GenParams): GeneratedMap {
+  const p = resolveParams(input);
   const timings: Record<string, number> = {};
   let t = performance.now();
   const lap = (name: string) => { const now = performance.now(); timings[name] = Math.round(now - t); t = now; };
