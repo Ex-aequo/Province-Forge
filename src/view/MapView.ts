@@ -122,6 +122,7 @@ export class MapView {
     this.tiles.setSource(tiles, W, H);
     this.tiles.setVisible(RASTER.includes(this.mode) && !this.custom);
     this.selected = -1;
+    this.viewport.provinceSide = this.rm.spacing * 5;
     this.viewport.setWorld(W, H, keepView);
     this.render();
   }

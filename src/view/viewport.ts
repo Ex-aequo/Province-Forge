@@ -48,7 +48,16 @@ export class Viewport {
     void h;
     return w / this.W;
   }
-  maxZoom() { const { w, h } = this.size(); return Math.max(w / this.W, h / this.H) * 8; }
+  /** Typical province side in map units (0 = unknown): bigger worlds keep the same close-up. */
+  provinceSide = 0;
+  setProvinceSide(u: number) { this.provinceSide = u; this.clamp(); this.apply(); }
+  maxZoom() {
+    const { w, h } = this.size();
+    const byWorld = Math.max(w / this.W, h / this.H) * 8;
+    // a province can always fill about a third of the smaller screen side
+    const byProvince = this.provinceSide > 0 ? Math.min(w, h) / 3 / this.provinceSide : 0;
+    return Math.max(byWorld, byProvince);
+  }
 
   fit() {
     const { w, h } = this.size();
