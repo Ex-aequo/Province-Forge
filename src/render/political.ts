@@ -137,6 +137,12 @@ export function renderPolitical(map: RenderMap, vs: ViewerState, opt: PoliticalO
     out.push(`<path fill="none" stroke="#a8781e" stroke-width="1.6" stroke-dasharray="5 3" ${nss} d="${chainPath(edges)}"/>`);
   }
 
+  // ---- known only from an earlier sighting: a pale veil (the borders stay readable)
+  const stale = (vs.stale ?? []).filter((id) => visible.has(id) && map.region(id));
+  if (stale.length) {
+    out.push(`<path class="stale" fill="rgba(236, 231, 218, 0.55)" d="${stale.map((i) => ringPath(map.rings(i))).join('')}"/>`);
+  }
+
   // ---- terra incognita on top of everything it hides
   out.push(renderFog(map, visible));
 

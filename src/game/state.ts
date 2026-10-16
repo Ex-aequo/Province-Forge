@@ -44,6 +44,9 @@ export interface ViewerState extends TurnState {
   viewer: string | null; // null = game master (sees everything)
   /** Region ids shown in colour; everything else is drawn grey (terra incognita). */
   visible: number[];
+  /** Subset of `visible` the viewer only knows from an earlier sighting (the server sends
+   *  what it was then): drawn under a pale veil so it reads as "not seen now". */
+  stale?: number[];
   /** Static facts revealed only for visible provinces (not in the client map). */
   details: Record<number, ProvinceDetails>;
   /** Reserved start territories the viewer can see (drawn hatched, untouchable). */
