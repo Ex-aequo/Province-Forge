@@ -7,6 +7,7 @@ import { generateHydrology } from './hydrology';
 import { nameMap } from './names';
 import { assignResources } from './resources';
 import { placeStarts } from './starts';
+import { nameStarts } from './countries';
 import type { Mesh } from './mesh';
 import { generateMesh } from './mesh';
 import { buildRegions } from './regions';
@@ -39,6 +40,7 @@ export function generateMap(input: GenParams): GeneratedMap {
   lap('names');
   assignResources(regions, climate.biome, p.rareShare, subRng(p.seed, 'resources'));
   const startsRes = placeStarts(regions, landmasses, p, subRng(p.seed, 'starts'));
+  nameStarts(startsRes.starts, regions, landmasses, subRng(p.seed, 'countries'));
   lap('starts');
 
   const issues = validate(mesh, cellRegion, regions, landmasses.filter((l) => l.isContinent).length, minProvinceCells, ringFailures);

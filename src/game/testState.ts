@@ -1,6 +1,7 @@
 // FAKE turn states for previewing the political map. Not game logic: it only has to
 // look like a plausible game at a given stage (start → mid → late).
 import { NameGen, countryName } from '../gen/names';
+import { colourDistance, hslHex, makePalette } from '../gen/countries';
 import { createRng, type Rng } from '../gen/rng';
 import type { Culture, GeneratedMap } from '../gen/types';
 import type { Country, PragaLevel, ProvinceState, TurnState } from './state';
@@ -167,28 +168,3 @@ function gaussian(rng: Rng) {
   return Math.sqrt(-2 * Math.log(Math.max(1e-9, rng()))) * Math.cos(2 * Math.PI * rng());
 }
 
-/** HSL triples (h 0–360, s, l in %) with well-spread hues and alternating lightness. */
-function makePalette(n: number, rng: Rng): [number, number, number][] {
-  const out: [number, number, number][] = [];
-  const start = rng() * 360;
-  for (let i = 0; i < n; i++) {
-    const h = (start + i * 137.508) % 360;
-    const s = 48 + ((i * 7) % 3) * 9;
-    const l = 40 + ((i * 5) % 4) * 6;
-    out.push([h, s, l]);
-  }
-  return out;
-}
-function colourDistance(a: [number, number, number], b: [number, number, number]) {
-  const dh = Math.min(Math.abs(a[0] - b[0]), 360 - Math.abs(a[0] - b[0]));
-  return dh + Math.abs(a[2] - b[2]) * 2;
-}
-function hslHex([h, s, l]: [number, number, number]) {
-  s /= 100; l /= 100;
-  const f = (n: number) => {
-    const k = (n + h / 30) % 12;
-    const c = l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1));
-    return Math.round(c * 255).toString(16).padStart(2, '0');
-  };
-  return `#${f(0)}${f(8)}${f(4)}`;
-}

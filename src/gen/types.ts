@@ -159,6 +159,8 @@ export interface StartPosition {
   freeNearby: number;
   /** Land steps from the capital to the nearest gold / spices province. */
   rareDistance: number;
+  /** Suggested country for this slot: name from the continent's culture, colour distinct from nearby starts. */
+  country?: { name: LocalName; fullName: LocalName; color: string };
 }
 
 export interface Fairness {
